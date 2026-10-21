@@ -36,6 +36,19 @@ app.get(['/login','/sign-in'],(req,res)=>res.send(html(req,'login','Sign In')));
 app.get(['/register','/sign-up'],(req,res)=>res.send(html(req,'register','Create Account')));
 app.get('/owner',(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=owner');if(!isOwner(req))return res.status(403).send(html(req,'forbidden','Access Denied'));res.set('Cache-Control','no-store');res.send(html(req,'owner','Owner Dashboard'));});
 app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
+// Temporary owner-access diagnostic. Remove after troubleshooting.
+app.get('/api/owner-diagnostic', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const userId = getAuth(req).userId || '';
+  const configuredId = process.env.PAL_OWNER_CLERK_USER_ID || '';
+  res.json({
+    signedIn: Boolean(userId),
+    ownerVariablePresent: Boolean(configuredId),
+    ownerVariableHasOuterWhitespace: configuredId !== configuredId.trim(),
+    ownerIdMatchesSession: Boolean(userId && configuredId && userId === configuredId),
+    recognizedRole: membership(req).role
+  });
+});
 app.get('/api/me',(req,res)=>{if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});res.set('Cache-Control','no-store');res.json({userId:getAuth(req).userId,...membership(req)});});
 // Optional private Supabase Storage documents. Service key stays SERVER SIDE.
 const supaUrl=(process.env.SUPABASE_URL||'').replace(/\/$/,'');
