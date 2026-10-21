@@ -91,6 +91,7 @@ app.post('/api/owner/files/:company/link',requireOwner,requireCompany,express.js
     const r=await fetch(url,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});
   }catch(e){console.error('Storage link error',e.message);storageError(res);}
 });
+require('./baa-api')(app,{manager:req=>membership(req).companies.includes('born-again-air')&&(isOwner(req)||membership(req).role==='manager'),user:req=>getAuth(req).userId});
 app.use(express.json({limit:'100kb'}));
 app.use((_req,res)=>res.status(404).send('Page not found'));
 app.listen(PORT,()=>console.log(`PAL listening on ${PORT}`));
