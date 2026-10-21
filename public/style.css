@@ -34,3 +34,5 @@ body:has(.pal-empty-home) .brandname { color:#fff!important; }
 body:has(.pal-empty-home) .brandmark { background:#32496b!important; }
 body:has(.pal-empty-home) .navbutton { background:#3b82f6!important; color:white!important; border-radius:8px!important; }
 body:has(.pal-empty-home) .signout-button { background:transparent!important; border:1px solid #7f94b5!important; }
+
+.baa-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;margin-top:24px}.baa-panel{background:#fff;border:1px solid #e1e6ee;border-radius:14px;padding:24px;color:#16223a}.baa-panel h2{margin:0 0 10px}.baa-panel p{color:#657184;line-height:1.55}.baa-split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.baa-split>div{background:#f1f5fb;border-radius:9px;padding:14px}.baa-return{padding:16px 0}.baa-return a{color:#2663ad;font-weight:700}@media(max-width:540px){.baa-split{grid-template-columns:1fr}}

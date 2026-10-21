@@ -35,6 +35,14 @@ app.get('/',(req,res)=>res.send(html(req,'home','Home')));
 app.get(['/login','/sign-in'],(req,res)=>res.send(html(req,'login','Sign In')));
 app.get(['/register','/sign-up'],(req,res)=>res.send(html(req,'register','Create Account')));
 app.get('/owner',(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=owner');if(!isOwner(req))return res.status(403).send(html(req,'forbidden','Access Denied'));res.set('Cache-Control','no-store');res.send(html(req,'owner','Owner Dashboard'));});
+app.get('/company/:company',(req,res)=>{
+  const company=req.params.company;
+  if(!companies.some(c=>c.id===company))return res.status(404).send('Company not found');
+  if(!isSignedIn(req))return res.redirect('/login?next=company');
+  if(!membership(req).companies.includes(company))return res.status(403).send(html(req,'forbidden','Access Denied'));
+  res.set('Cache-Control','no-store');
+  return res.send(html(req,company==='born-again-air'?'baa':'newstart','Company Workspace'));
+});
 app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
 // Temporary owner-access diagnostic. Remove after troubleshooting.
 app.get('/api/owner-diagnostic', (req, res) => {
