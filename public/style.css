@@ -25,3 +25,12 @@ body:has(.pal-empty-home) .pal-minimal-nav .brandname small{display:none}
 body:has(.pal-empty-home) .pal-minimal-nav .navbutton{background:#3b82f6}
 body:has(.pal-empty-home) .pal-minimal-nav .signout-button{background:transparent;border:1px solid #7892b6}
 @media(max-width:760px){body:has(.pal-empty-home) .pal-empty-home{min-height:calc(100dvh - 73px)}}
+
+/* PAL approved minimal navy homepage */
+body:has(.pal-empty-home), body:has(.pal-empty-home) #app { background:#101b30!important; min-height:100dvh; }
+body:has(.pal-empty-home) .topbar { background:#101b30!important; border:0!important; box-shadow:none!important; }
+body:has(.pal-empty-home) .pal-empty-home { background:#101b30!important; min-height:calc(100dvh - 88px); }
+body:has(.pal-empty-home) .brandname { color:#fff!important; }
+body:has(.pal-empty-home) .brandmark { background:#32496b!important; }
+body:has(.pal-empty-home) .navbutton { background:#3b82f6!important; color:white!important; border-radius:8px!important; }
+body:has(.pal-empty-home) .signout-button { background:transparent!important; border:1px solid #7f94b5!important; }
