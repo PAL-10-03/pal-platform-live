@@ -18,17 +18,20 @@ app.get('/', (req, res) => {
       <body style="font-family: Arial; padding: 40px;">
         <h1>PAL Business Solutions</h1>
         <p>Public site</p>
-        <a href="/sign-in" style="font-size: 24px;">Sign In</a>
+        <a href="/sign-in" style="font-size: 24px; margin-right: 20px;">Sign In</a>
+        <a href="/sign-up" style="font-size: 24px;">Sign Up</a>
       </body>
     </html>
   `);
 });
 
-// Sign-in redirect to Clerk Account Portal
+// Redirect to real Clerk Account Portal
 app.get('/sign-in', (req, res) => {
-  // Replace this with your real Clerk Account Portal sign-in URL once you copy it
-  const clerkSignIn = process.env.CLERK_SIGN_IN_URL || 'https://accounts.clerk.dev/sign-in';
-  res.redirect(clerkSignIn);
+  res.redirect('https://accounts.palbiz.app/sign-in');
+});
+
+app.get('/sign-up', (req, res) => {
+  res.redirect('https://accounts.palbiz.app/sign-up');
 });
 
 // Owner page (protected)
