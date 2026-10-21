@@ -8,39 +8,57 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Clerk middleware (must be first)
+// Clerk middleware
 app.use(clerkMiddleware());
 
 // Public home
 app.get('/', (req, res) => {
   res.send(`
-    <h1>PAL Business Solutions</h1>
-    <p>Public site</p>
-    <a href="/sign-in">Sign In</a>
+    <html>
+      <body style="font-family: Arial; padding: 40px;">
+        <h1>PAL Business Solutions</h1>
+        <p>Public site</p>
+        <a href="/sign-in" style="font-size: 24px;">Sign In</a>
+      </body>
+    </html>
   `);
 });
 
-// Protected owner dashboard (you only)
-app.get('/owner', requireAuth(), async (req, res) => {
+// Sign-in redirect to Clerk Account Portal
+app.get('/sign-in', (req, res) => {
+  // Replace this with your real Clerk Account Portal sign-in URL once you copy it
+  const clerkSignIn = process.env.CLERK_SIGN_IN_URL || 'https://accounts.clerk.dev/sign-in';
+  res.redirect(clerkSignIn);
+});
+
+// Owner page (protected)
+app.get('/owner', requireAuth(), (req, res) => {
   const auth = getAuth(req);
   res.send(`
-    <h1>Owner Backend</h1>
-    <p>Only you see this. Extract data and run automations here.</p>
-    <p>User ID: ${auth.userId}</p>
-    <a href="/">Home</a>
+    <html>
+      <body style="font-family: Arial; padding: 40px;">
+        <h1>Owner Backend</h1>
+        <p>You are signed in. User ID: ${auth.userId}</p>
+        <a href="/">Home</a>
+      </body>
+    </html>
   `);
 });
 
-// Tenant portal example (Born Again Air later)
-app.get('/portal', requireAuth(), async (req, res) => {
+// Portal page (protected)
+app.get('/portal', requireAuth(), (req, res) => {
   const auth = getAuth(req);
   res.send(`
-    <h1>Tenant Portal</h1>
-    <p>Companies see only their own modules here.</p>
-    <p>User ID: ${auth.userId}</p>
+    <html>
+      <body style="font-family: Arial; padding: 40px;">
+        <h1>Tenant Portal</h1>
+        <p>Company view. User ID: ${auth.userId}</p>
+        <a href="/">Home</a>
+      </body>
+    </html>
   `);
 });
 
 app.listen(PORT, () => {
-  console.log(`PAL running on port ${PORT}`);
+  console.log('PAL running on port ' + PORT);
 });
