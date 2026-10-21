@@ -14,3 +14,14 @@
 .pal-minimal-nav .signout-button:hover{background:#233a5a}
 .pal-empty-home{background:linear-gradient(135deg,#0b192d 0%,#101f39 55%,#142d4c 100%);min-height:calc(100vh - 88px - 73px)}
 @media(max-width:600px){.pal-minimal-nav{padding:0 16px}.pal-minimal-nav .brandname{font-size:16px}.pal-minimal-nav .brandmark{width:37px;height:37px;font-size:24px}.pal-minimal-nav .navlinks{gap:7px}.pal-minimal-nav .navbutton{padding:11px 12px;font-size:12px}.pal-empty-home{min-height:calc(100vh - 88px - 73px)}}
+
+/* Homepage: exactly the approved navy concept, with only PAL and Sign In. */
+body:has(.pal-empty-home){background:#101b30}
+body:has(.pal-empty-home) .pal-minimal-nav{background:#101b30;border-bottom:0}
+body:has(.pal-empty-home) .pal-empty-home{background:#101b30;min-height:calc(100dvh - 88px)}
+body:has(.pal-empty-home) .pal-minimal-nav .brandmark{background:#32496b}
+body:has(.pal-empty-home) .pal-minimal-nav .brandname{font-size:19px;letter-spacing:0}
+body:has(.pal-empty-home) .pal-minimal-nav .brandname small{display:none}
+body:has(.pal-empty-home) .pal-minimal-nav .navbutton{background:#3b82f6}
+body:has(.pal-empty-home) .pal-minimal-nav .signout-button{background:transparent;border:1px solid #7892b6}
+@media(max-width:760px){body:has(.pal-empty-home) .pal-empty-home{min-height:calc(100dvh - 73px)}}
