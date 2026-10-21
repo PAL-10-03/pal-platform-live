@@ -20,8 +20,10 @@ function membership(req){
   // Optional server-managed bootstrap membership map. NEVER accept roles from browser requests.
   let map={}; try {map=JSON.parse(process.env.PAL_COMPANY_MEMBERSHIPS_JSON || '{}');}catch(e){console.error('Invalid PAL_COMPANY_MEMBERSHIPS_JSON');}
   const record=map[userId];
-  if(!record || !['manager','employee'].includes(record.role) || !companies.some(c=>c.id===record.company)) return {role:'unassigned',companies:[]};
-  return {role:record.role,companies:[record.company]};
+  // Accept either companyId (Render setup) or company (older installations).
+  const company=record?.companyId || record?.company;
+  if(!record || !['manager','employee'].includes(record.role) || !companies.some(c=>c.id===company)) return {role:'unassigned',companies:[]};
+  return {role:record.role,companies:[company]};
 }
 function html(req,view,title){
   const state={view,publishableKey:process.env.CLERK_PUBLISHABLE_KEY||'',signedIn:isSignedIn(req),owner:isOwner(req),membership:membership(req),companies,dropbox:{'born-again-air':process.env.PAL_BAA_DROPBOX_URL||'',newstart:process.env.PAL_NEWSTART_DROPBOX_URL||''}};

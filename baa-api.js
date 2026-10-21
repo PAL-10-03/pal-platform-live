@@ -59,7 +59,7 @@ app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
  for(const [col,width] of [['A',20],['B',5],['C',20],['D',5],['E',12],['F',5],['G',20],['H',5],['I',20]])sh.getColumn(col).width=width;
  for(const col of ['A','C','E','G','I']){const c=sh.getCell(col+'1');c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={vertical:'middle'};}
  sh.getRow(1).height=23;const money='"$"#,##0.00';
- b.items.forEach((x,i)=>{const n=i+2;sh.getCell(`A${n}`).value=x.core||null;sh.getCell(`C${n}`).value=x.part||null;sh.getCell(`E${n}`).value=x.qty;
+ [...b.items].sort((a,b)=>{const x=String(a.core??""),y=String(b.core??"");return x.localeCompare(y,undefined,{numeric:true,sensitivity:"base"});}).forEach((x,i)=>{const n=i+2;sh.getCell(`A${n}`).value=x.core||null;sh.getCell(`C${n}`).value=x.part||null;sh.getCell(`E${n}`).value=x.qty;
   if(b.type!=='core-receiving'&&x.price!==null&&x.price!==undefined){const unit=Number(x.price);sh.getCell(`G${n}`).value=unit;sh.getCell(`I${n}`).value={formula:`E${n}*G${n}`,result:Number(x.qty)*unit};}
   sh.getCell(`G${n}`).numFmt=money;sh.getCell(`I${n}`).numFmt=money;
  });
