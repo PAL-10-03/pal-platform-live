@@ -61,7 +61,7 @@ app.post('/api/baa/boxes/:id/finish',manager,async(req,res)=>{const b=await read
 app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
  const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);
  const wb=new ExcelJS.Workbook();const sh=wb.addWorksheet('Buy List');
- for(const [col,title] of (b.type==='compressor-shipping'?[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Core Charge'],['K','Total Price']]:[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Total Price']]))sh.getCell(col+'1').value=title;
+ for(const [col,title] of (b.type==='compressor-shipping'?[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Core Charge P/u'],['K','Total Price']]:[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Total Price']]))sh.getCell(col+'1').value=title;
  for(const [col,width] of [['A',20],['B',5],['C',20],['D',5],['E',12],['F',5],['G',20],['H',5],['I',20],['J',5],['K',20]])sh.getColumn(col).width=width;
  for(const col of (b.type==='compressor-shipping'?['A','C','E','G','I','K']:['A','C','E','G','I'])){const c=sh.getCell(col+'1');c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={vertical:'middle'};}
  sh.getRow(1).height=23;const money='"$"#,##0.00';
