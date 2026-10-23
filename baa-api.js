@@ -11,6 +11,18 @@ async function readRemote(key){
  const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{headers:{apikey:sk,Authorization:`Bearer ${sk}`}});
  if(r.ok)return {found:true,value:await r.json()};
  if(r.status===404)return {found:false};
+ // Supabase Storage can return HTTP 400 with an Object-not-found payload.
+ // Only the missing box index is allowed to fall back to the empty-list default.
+ // Other 400 responses (bad credentials, bucket errors, etc.) remain visible.
+ if(key==='box-index'&&r.status===400){
+  const body=await r.text();
+  let detail={};try{detail=JSON.parse(body);}catch(_){}
+  const message=String(detail.message||'').toLowerCase();
+  const error=String(detail.error||'').toLowerCase();
+  if((message==='object not found'||message==='the resource was not found')&&
+     (error==='not_found'||error==='not found'||String(detail.statusCode||'')==='404'))return {found:false};
+  throw Error('Storage read failed 400 for box-index: '+(detail.message||detail.error||body.slice(0,160)));
+ }
  throw Error('Storage read failed '+r.status+' for '+key);
 }
 async function initializeSeed(key,fallback){
