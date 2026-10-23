@@ -57,6 +57,14 @@ async function read(key,fallback){if(remote){
  return structuredClone(fallback);
 }
 async function write(key,value){const json=JSON.stringify(value);if(remote){const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{method:'POST',headers:{apikey:sk,Authorization:`Bearer ${sk}`,'Content-Type':'application/json','x-upsert':'true'},body:json});if(!r.ok)throw Error('Storage write failed '+r.status);}else fs.writeFileSync(path.join(base,key+'.json'),json);}
+async function removeStoredBox(id){
+ if(remote){
+  const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/box-${id}.json`,{method:'DELETE',headers:{apikey:sk,Authorization:`Bearer ${sk}`}});
+  if(!r.ok&&r.status!==404)throw Error('Storage delete failed '+r.status+' for box-'+id);
+ }else{
+  const f=path.join(base,'box-'+id+'.json');if(fs.existsSync(f))fs.unlinkSync(f);
+ }
+}
 const cat=()=>read('catalog',seedCatalog);const prices=()=>read('prices',seedPrices);const norm=v=>String(v??'').trim().toUpperCase().replace(/\s+/g,'');
 const num=v=>v===null||v===undefined||v===''?null:Number(v);
 // The PDF catalog establishes identity (part + core). The Excel CORE BASE
@@ -89,6 +97,18 @@ app.post('/api/baa/catalog/upload',manager,require('express').raw({type:['applic
 app.post('/api/baa/prices/upload',manager,require('express').raw({type:['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/octet-stream'],limit:'12mb'}),async(req,res)=>{try{const wb=new ExcelJS.Workbook();await wb.xlsx.load(req.body);const rows=parsePriceSheet(wb);if(!rows.length)return res.status(422).json({error:'No valid price rows; old prices preserved'});await write('prices',rows);res.json({ok:true,count:rows.length});}catch(e){res.status(422).json({error:e.message});}});
 app.get('/api/baa/boxes',manager,async(req,res)=>{try{const ids=await read('box-index',[]);const all=await Promise.all(ids.map(id=>read('box-'+id,null)));res.json(all.filter(Boolean).map(b=>({id:b.id,name:b.name,type:b.type,status:b.status,updatedAt:b.updatedAt,totalQty:summary(b).totalQty,pricedTotal:summary(b).pricedTotal,unpriced:summary(b).unpriced})).reverse());}catch(e){res.status(500).json({error:e.message});}});
 app.post('/api/baa/boxes',manager,json,async(req,res)=>{try{const type=req.body.type;if(!['core-shipping','compressor-shipping','core-receiving'].includes(type))return res.status(400).json({error:'Invalid type'});const id=require('crypto').randomUUID();const b={id,name:String(req.body.name||type).slice(0,100),type,status:'draft',receivingTotal:null,items:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),createdBy:auth.user(req)};await write('box-'+id,b);const ids=await read('box-index',[]);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
+// Manager-only deletion; the index is updated before removing the stored box.
+app.delete('/api/baa/boxes/:id',manager,async(req,res)=>{try{
+ const id=req.params.id;if(!safeId(id))return res.sendStatus(400);
+ const ids=await read('box-index',[]);
+ if(!ids.includes(id))return res.status(404).json({error:'Saved box not found'});
+ const box=await read('box-'+id,null);
+ if(!box)return res.status(404).json({error:'Saved box not found'});
+ await write('box-index',ids.filter(x=>x!==id));
+ await removeStoredBox(id);
+ res.json({ok:true,deleted:id});
+ }catch(e){res.status(500).json({error:e.message});}
+});
 app.get('/api/baa/boxes/:id',manager,async(req,res)=>{if(!safeId(req.params.id))return res.sendStatus(400);const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);res.json(summary(b));});
 app.post('/api/baa/boxes/:id/items',manager,json,async(req,res)=>{try{const id=req.params.id;if(!safeId(id))return res.sendStatus(400);const b=await read('box-'+id,null);if(!b)return res.sendStatus(404);if(b.status!=='draft')return res.status(409).json({error:'Finished boxes cannot be edited'});const part=norm(req.body.part),core=norm(req.body.core),qty=Number(req.body.qty);if(!part&&!core)return res.status(400).json({error:'Enter a part or core number'});if(!Number.isSafeInteger(qty)||qty<1||qty>100000)return res.status(400).json({error:'Invalid quantity'});const matches=lookup(await cat(),b.type==='core-receiving'?[]:await prices(),part||core).matches.filter(x=>(!part||norm(x.part)===part)&&(!core||norm(x.core)===core));if(matches.length>1)return res.status(409).json({error:'Duplicate/ambiguous database match. Resolve before adding.'});if(matches.length===0)return res.status(422).json({error:'Number not found in Born Again Air database. Add or correct the record first.'});if(matches.length===1){const m=matches[0];if(m.priceStatus==='ambiguous')return res.status(409).json({error:'Ambiguous price. Correct price sheet before adding.'});}const row=matches[0]||null;const p=part||row?.part||'',c=core||row?.core||'';const pricesRows=b.type==='core-receiving'?[]:await prices();const resolved=priceFor(pricesRows,p,c);if(resolved.priceStatus==='ambiguous')return res.status(409).json({error:'Conflicting prices for CORE BASE '+resolved.priceCoreBase+'. Manager review required.'});if(b.type==='core-shipping'&&resolved.priceStatus!=='matched')return res.status(422).json({error:'NOT ON PRICE SHEET — HOLD ASIDE. Print the label; do not add this core to a shipping box.'});const isCompressor=b.type==='compressor-shipping';
  const coreCharge=isCompressor?req.body.coreCharge:null;
