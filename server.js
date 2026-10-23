@@ -45,7 +45,7 @@ app.get('/company/:company',(req,res)=>{
   res.set('Cache-Control','no-store');
   return res.send(html(req,company==='born-again-air'?'baa':'newstart','Company Workspace'));
 });
-app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
+app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');const member=membership(req);if(member.role==='manager'&&member.companies.includes('born-again-air'))return res.redirect('/company/born-again-air');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
 // Temporary owner-access diagnostic. Remove after troubleshooting.
 app.get('/api/owner-diagnostic', (req, res) => {
   res.set('Cache-Control', 'no-store');
