@@ -14,13 +14,16 @@ async function readRemote(key){
  // Supabase Storage can return HTTP 400 with an Object-not-found payload.
  // Only the missing box index is allowed to fall back to the empty-list default.
  // Other 400 responses (bad credentials, bucket errors, etc.) remain visible.
- if((key==='box-index'||key==='price-history')&&r.status===400){
+ if((key==='box-index'||key==='price-history'||key==='price-bundle')&&r.status===400){
   const body=await r.text();
   let detail={};try{detail=JSON.parse(body);}catch(_){}
   const message=String(detail.message||'').toLowerCase();
   const error=String(detail.error||'').toLowerCase();
-  if((message==='object not found'||message==='the resource was not found')&&
-     (error==='not_found'||error==='not found'||String(detail.statusCode||'')==='404'||String(detail.statusCode||'')==='400'))return {found:false};
+  const code=String(detail.statusCode||detail.status||'');
+  // Missing objects are returned as HTTP 400 by some Supabase Storage versions.
+  // Require a recognized missing-object message; never hide auth or bucket errors.
+  if((message==='object not found'||message==='the resource was not found'||message==='not found'||error==='not_found'||error==='not found'||error==='nosuchkey')&&
+     (!code||code==='400'||code==='404'))return {found:false};
   throw Error('Storage read failed 400 for '+key+': '+(detail.message||detail.error||body.slice(0,160)));
  }
  throw Error('Storage read failed '+r.status+' for '+key);
