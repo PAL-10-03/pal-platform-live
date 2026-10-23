@@ -3,7 +3,14 @@ const seedCatalog=require('./data/catalog.json');const seedPrices=require('./dat
 const base=path.join(__dirname,'data','baa-runtime');fs.mkdirSync(base,{recursive:true});
 const su=(process.env.SUPABASE_URL||'').replace(/\/$/,'');const sk=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY||'';const bucket=process.env.PAL_SUPABASE_BUCKET||'pal-private-documents';const remote=!!(su&&sk);
 const safeId=s=>/^[a-zA-Z0-9_-]{1,90}$/.test(s||'');
-async function read(key,fallback){if(remote){const url=`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`;const headers={apikey:sk,Authorization:`Bearer ${sk}`};const r=await fetch(url,{headers});if(r.ok)return r.json();if(r.status!==404)throw Error('Storage read failed '+r.status);if(key==='catalog'||key==='prices'){// Seed only missing reference files; never overwrite existing Supabase data.
+async function read(key,fallback){if(remote){const url=`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`;const headers={apikey:sk,Authorization:`Bearer ${sk}`};const r=await fetch(url,{headers});if(r.ok)return r.json();
+ // Supabase Storage may return HTTP 400 for a missing object, with a JSON error indicating not_found.
+ // Do not treat unrelated HTTP 400 errors as missing files.
+ const errorBody=await r.text();let detail={};try{detail=JSON.parse(errorBody);}catch(_){}
+ const description=[detail.error,detail.message,detail.statusCode,detail.code].filter(Boolean).join(' ').toLowerCase();
+ const missing=r.status===404||(r.status===400&&(/not[_ -]?found|no such object|object does not exist|resource not found/.test(description)||String(detail.statusCode)==='404'));
+ if(!missing)throw Error('Storage read failed '+r.status+(description?' ('+description.slice(0,180)+')':''));
+ if(key==='catalog'||key==='prices'){// Seed only missing reference files; never overwrite existing Supabase data.
  const seed=JSON.stringify(fallback);const created=await fetch(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','x-upsert':'false'},body:seed});
  if(!created.ok&&created.status!==409)throw Error('Storage seed failed '+created.status);
  const verified=await fetch(url,{headers});if(!verified.ok)throw Error('Storage seed verification failed '+verified.status);
