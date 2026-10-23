@@ -26,12 +26,15 @@ function baa(){const manager=state.owner||state.membership.role==='manager';shel
 async function baaShow(section){if(!baaRequireDecision())return;baaSection=section;document.querySelectorAll('[data-section]').forEach(b=>b.classList.toggle('selected',b.dataset.section===section));const el=document.getElementById('baa-content');if(!el)return;el.innerHTML='<p>Loading…</p>';try{if(section==='database'){
  const status=await api('/status');
  el.innerHTML=`<h2>Part / Core Database & Price Lists</h2><p>${status.catalog} part/core records · ${status.prices} current prices · ${status.pricesA} A prices · ${status.pricesB} B prices</p>${status.warning?`<p class="baa-warning">${esc(status.warning)}</p>`:''}
- <div class="baa-cards baa-admin-grid">
- <div class="baa-card"><h3>4S Part/Core Data Base</h3><input type="file" id="pdf-file" accept=".pdf,application/pdf"><button id="pdf-upload">Replace PDF Data Base</button></div>
- <div class="baa-card"><h3>Current Price List</h3><input type="file" id="price-file" accept=".xlsx"><button id="price-upload">Upload New Current Price List</button></div>
- <div class="baa-card"><h3>Price List A</h3><input type="file" id="price-a-file" accept=".xlsx"><button id="price-a-upload">Upload Price List A</button></div>
- <div class="baa-card"><h3>Price List B</h3><input type="file" id="price-b-file" accept=".xlsx"><button id="price-b-upload">Upload Price List B</button></div>
- </div><p id="baa-msg"></p><div class="baa-cards baa-admin-grid baa-view-grid"><div class="baa-card"><h3>Current Part / Core Database</h3><button id="view-catalog">View Database</button></div><div class="baa-card"><h3>Current Price List</h3><button id="view-prices">View Current</button></div><div class="baa-card"><h3>Price List A</h3><button id="view-prices-a">View A</button></div><div class="baa-card"><h3>Price List B</h3><button id="view-prices-b">View B</button></div></div><div id="baa-data-view"></div>`;
+ <div class="baa-admin-top-row">
+ <div class="baa-card baa-admin-panel"><h3>4S Part/Core Database</h3><input type="file" id="pdf-file" accept=".pdf,application/pdf"><div class="baa-admin-buttons"><button id="pdf-upload">Replace PDF Data Base</button><button id="view-catalog">View Database</button></div></div>
+ <div class="baa-brand-panel" aria-label="Born Again Air"><div class="baa-brand-symbol" aria-hidden="true"><span>B</span><span>A</span></div><div class="baa-brand-name">BORN AGAIN <strong>AIR</strong></div><div class="baa-brand-rule"></div></div>
+ </div>
+ <div class="baa-admin-price-row">
+ <div class="baa-card baa-admin-panel"><h3>Current Price List</h3><input type="file" id="price-file" accept=".xlsx"><div class="baa-admin-buttons"><button id="price-upload">Upload Current</button><button id="view-prices">View Current</button></div></div>
+ <div class="baa-card baa-admin-panel"><h3>Price List A</h3><input type="file" id="price-a-file" accept=".xlsx"><div class="baa-admin-buttons"><button id="price-a-upload">Upload Price List A</button><button id="view-prices-a">View Price List A</button></div></div>
+ <div class="baa-card baa-admin-panel"><h3>Price List B</h3><input type="file" id="price-b-file" accept=".xlsx"><div class="baa-admin-buttons"><button id="price-b-upload">Upload Price List B</button><button id="view-prices-b">View Price List B</button></div></div>
+ </div><p id="baa-msg"></p><div id="baa-data-view"></div>`;
  document.getElementById('view-catalog').onclick=()=>baaViewData('catalog');
  document.getElementById('view-prices').onclick=()=>baaViewData('prices');
  document.getElementById('view-prices-a').onclick=()=>baaViewData('prices','',0,'a');
