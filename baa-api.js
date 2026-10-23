@@ -214,7 +214,7 @@ app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
   // No colored footer: quantity and price totals only, three blank rows below items.
   sh.getCell(`B${t}`).value=null;
   sh.getCell(`A${t}`).value={formula:`SUM(A4:A${t-1})`,result:b.items.reduce((v,x)=>v+Number(x.qty||0),0)};
-  sh.getCell(`H${t}`).value={formula:`IF(COUNT(H4:H${t-1})<COUNT(A4:A${t-1}),"",SUM(H4:H${t-1}))`,result:b.items.every(x=>!x.unknownPart&&!x.missingCorePrice)?b.items.reduce((sum,x)=>sum+Number(x.qty)*(Number(x.coreCharge??0)+Number(x.basePrice??65.5)),0):''};
+  sh.getCell(`H${t}`).value={formula:`SUM(H4:H${t-1})`,result:b.items.reduce((sum,x)=>{if(x.unknownPart||x.missingCorePrice)return sum;const qty=Number(x.qty),base=Number(x.basePrice??65.5),charge=Number(x.coreCharge??Math.max(0,Number(x.price)-base));return sum+(Number.isFinite(qty)&&Number.isFinite(base)&&Number.isFinite(charge)?qty*(base+charge):0);},0)};
   sh.getCell(`H${t}`).numFmt=money;
   for(const col of ['A','H']){const cell=sh.getCell(`${col}${t}`);cell.font={bold:true,color:{argb:'FF111111'},underline:col==='H'?'double':false};cell.alignment={horizontal:'center'};}
   sh.getCell(`H${t}`).border={bottom:{style:'double',color:{argb:'FF111111'}}};
