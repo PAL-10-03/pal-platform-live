@@ -20,8 +20,8 @@ async function readRemote(key){
   const message=String(detail.message||'').toLowerCase();
   const error=String(detail.error||'').toLowerCase();
   if((message==='object not found'||message==='the resource was not found')&&
-     (error==='not_found'||error==='not found'||String(detail.statusCode||'')==='404'))return {found:false};
-  throw Error('Storage read failed 400 for box-index: '+(detail.message||detail.error||body.slice(0,160)));
+     (error==='not_found'||error==='not found'||String(detail.statusCode||'')==='404'||String(detail.statusCode||'')==='400'))return {found:false};
+  throw Error('Storage read failed 400 for '+key+': '+(detail.message||detail.error||body.slice(0,160)));
  }
  throw Error('Storage read failed '+r.status+' for '+key);
 }
