@@ -177,42 +177,49 @@ app.delete('/api/baa/boxes/:id/items/:item',manager,async(req,res)=>{const b=awa
 app.post('/api/baa/boxes/:id/finish',manager,async(req,res)=>{const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(!b.items.length)return res.status(400).json({error:'Box is empty'});if(b.type==='core-shipping'&&b.items.some(x=>x.price===null||x.price===undefined))return res.status(409).json({error:'Unpriced cores cannot be shipped. Remove and label them for HOLD ASIDE.'});if(b.type==='core-shipping'&&b.items.some(x=>x.price===null)&&!req.body?.acknowledgeUnpriced)return res.status(409).json({error:'Some items have no price. Confirm explicitly before finishing.'});b.status='finished';b.finishedBy=auth.user(req);b.finishedAt=new Date().toISOString();b.updatedAt=b.finishedAt;await write('box-'+b.id,b);res.json(summary(b));});
 app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
  const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);
- const wb=new ExcelJS.Workbook();const sh=wb.addWorksheet('Buy List');
+ const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;const sh=wb.addWorksheet('Buy List');
  if(b.type==='compressor-shipping'){
   // Compressor purchase order only. Other box exports retain their existing path.
+  // Purchase-order heading: three merged white sections, then one blank row.
+  for(const [range,anchor,label] of [['A1:D1','A1','REMAN. COMPRESSORS'],['E1:H1','E1','R&R Reynosa'],['I1:L1','I1','Date']]){
+   sh.mergeCells(range);const cell=sh.getCell(anchor);cell.value=label;cell.font={name:'Calibri',bold:true,size:13,color:{argb:'FF111111'}};cell.alignment={vertical:'middle',horizontal:'left',indent:1};cell.border={bottom:{style:'thin',color:{argb:'FF9AA4AE'}}};
+  }
+  sh.getRow(1).height=27;sh.getRow(2).height=16;
   const headings=['QTY','PART #','400#','PART','CORE PRICE','REBUILD PRICE','UNIT TOTAL','LINE TOTAL','','OIL','CORES LOST','CORES USED'];
   const widths=[9,17,20,20,16,18,16,18,5,12,16,16];
-  headings.forEach((heading,i)=>{const col=i+1;sh.getColumn(col).width=widths[i];const c=sh.getCell(1,col);c.value=heading;c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={horizontal:'center',vertical:'middle',wrapText:true};});
-  sh.getRow(1).height=32;
+  headings.forEach((heading,i)=>{const col=i+1;sh.getColumn(col).width=widths[i];const c=sh.getCell(3,col);c.value=heading;c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={horizontal:'center',vertical:'middle',wrapText:true};});
+  sh.getRow(3).height=20;
   const money='"$"#,##0.00';
   // Catalog currently stores part/core; model appears only if the catalog actually has one.
   const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));
   [...b.items].sort((a,b)=>String(a.core??'').localeCompare(String(b.core??''),undefined,{numeric:true,sensitivity:'base'})).forEach((x,i)=>{
-   const n=i+2,qty=Number(x.qty),unknown=Boolean(x.unknownPart),missing=Boolean(x.missingCorePrice),base=unknown?null:Number(x.basePrice??65.5),charge=unknown||missing?null:Number(x.coreCharge??Math.max(0,Number(x.price)-base));
+   const n=i+4,qty=Number(x.qty),unknown=Boolean(x.unknownPart),missing=Boolean(x.missingCorePrice),base=unknown?null:Number(x.basePrice??65.5),charge=unknown||missing?null:Number(x.coreCharge??Math.max(0,Number(x.price)-base));
    sh.getCell(`A${n}`).value=qty;
    sh.getCell(`B${n}`).value=x.part||null;
    sh.getCell(`C${n}`).value=unknown?null:x.part?'400'+String(x.part):null;
    sh.getCell(`D${n}`).value=unknown?null:x.model||models.get(norm(x.part))||catalogModels[norm(x.part)]||null;
    sh.getCell(`E${n}`).value=missing?'?':charge;
    sh.getCell(`F${n}`).value=base;
-   sh.getCell(`G${n}`).value={formula:`IF(OR(NOT(ISNUMBER(E${n})),NOT(ISNUMBER(F${n}))),"",E${n}+F${n})`};
-   sh.getCell(`H${n}`).value={formula:`IF(OR(NOT(ISNUMBER(A${n})),NOT(ISNUMBER(G${n}))),"",A${n}*G${n})`};
+   sh.getCell(`G${n}`).value={formula:`IF(OR(NOT(ISNUMBER(E${n})),NOT(ISNUMBER(F${n}))),"",E${n}+F${n})`,result:(!unknown&&!missing&&Number.isFinite(charge)&&Number.isFinite(base))?charge+base:''};
+   sh.getCell(`H${n}`).value={formula:`IF(OR(NOT(ISNUMBER(A${n})),NOT(ISNUMBER(G${n}))),"",A${n}*G${n})`,result:(!unknown&&!missing&&Number.isFinite(charge)&&Number.isFinite(base))?qty*(charge+base):''};
    sh.getCell(`I${n}`).value=unknown?null:x.priceSource==='a'?'*':x.priceSource==='b'?'**':null;
-   sh.getCell(`J${n}`).value=unknown?null:{formula:`IF(ISNUMBER(A${n}),A${n}*4,"")`};
+   sh.getCell(`J${n}`).value={formula:`IF(ISNUMBER(A${n}),A${n}*4,"")`,result:qty*4};
    for(const col of ['E','F','G','H'])sh.getCell(`${col}${n}`).numFmt=money;
    sh.getCell(`J${n}`).numFmt='0" oz"';
    for(let c=1;c<=12;c++){const cell=sh.getCell(n,c);cell.alignment={vertical:'middle',horizontal:[1,5,6,7,8,9,10].includes(c)?'center':'left'};cell.border={bottom:{style:'hair',color:{argb:'FFDCE5EF'}}};if(i%2===1)cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF3F7FC'}};}
-   if(missing){const cell=sh.getCell(`E${n}`);cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}};cell.font={bold:true,color:{argb:'FF000000'}};}if(unknown){const cell=sh.getCell(`B${n}`);cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};cell.font={bold:true,color:{argb:'FFFFFFFF'}};}sh.getRow(n).height=22;
+   if(missing){for(const col of ['B','E']){const cell=sh.getCell(`${col}${n}`);cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}};cell.font={bold:true,color:{argb:'FF000000'}};}}if(unknown){const cell=sh.getCell(`B${n}`);cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};cell.font={bold:true,color:{argb:'FFFFFFFF'}};}sh.getRow(n).height=22;
   });
   // Keep the existing three blank spacer rows before totals.
-  const t=b.items.length+5;
-  sh.getCell(`B${t}`).value='TOTAL';
-  sh.getCell(`A${t}`).value={formula:`SUM(A2:A${t-1})`,result:b.items.reduce((v,x)=>v+Number(x.qty||0),0)};
-  sh.getCell(`H${t}`).value={formula:`IF(COUNT(H2:H${t-1})<COUNT(A2:A${t-1}),"",SUM(H2:H${t-1}))`};
+  const t=b.items.length+7;
+  // No colored footer: quantity and price totals only, three blank rows below items.
+  sh.getCell(`B${t}`).value=null;
+  sh.getCell(`A${t}`).value={formula:`SUM(A4:A${t-1})`,result:b.items.reduce((v,x)=>v+Number(x.qty||0),0)};
+  sh.getCell(`H${t}`).value={formula:`IF(COUNT(H4:H${t-1})<COUNT(A4:A${t-1}),"",SUM(H4:H${t-1}))`,result:b.items.every(x=>!x.unknownPart&&!x.missingCorePrice)?b.items.reduce((sum,x)=>sum+Number(x.qty)*(Number(x.coreCharge??0)+Number(x.basePrice??65.5)),0):''};
   sh.getCell(`H${t}`).numFmt=money;
-  for(let c=1;c<=12;c++){const cell=sh.getCell(t,c);cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};}
-  sh.getRow(t).height=25;
-  sh.views=[{state:'frozen',ySplit:1}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:L${t}`,orientation:'landscape'};
+  for(const col of ['A','H']){const cell=sh.getCell(`${col}${t}`);cell.font={bold:true,color:{argb:'FF111111'},underline:col==='H'?'double':false};cell.alignment={horizontal:'center'};}
+  sh.getCell(`H${t}`).border={bottom:{style:'double',color:{argb:'FF111111'}}};
+  sh.getRow(t).height=23;
+  sh.views=[{state:'frozen',ySplit:3}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:L${t}`,orientation:'landscape'};
   const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});return res.send(Buffer.from(data));
  }
 
