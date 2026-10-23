@@ -3,7 +3,13 @@ const seedCatalog=require('./data/catalog.json');const seedPrices=require('./dat
 const base=path.join(__dirname,'data','baa-runtime');fs.mkdirSync(base,{recursive:true});
 const su=(process.env.SUPABASE_URL||'').replace(/\/$/,'');const sk=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY||'';const bucket=process.env.PAL_SUPABASE_BUCKET||'pal-private-documents';const remote=!!(su&&sk);
 const safeId=s=>/^[a-zA-Z0-9_-]{1,90}$/.test(s||'');
-async function read(key,fallback){if(remote){const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{headers:{apikey:sk,Authorization:`Bearer ${sk}`}});if(r.ok)return r.json();if(r.status!==404&&r.status!==400)throw Error('Storage read failed '+r.status);}else{const f=path.join(base,key+'.json');if(fs.existsSync(f))return JSON.parse(fs.readFileSync(f));}return structuredClone(fallback);}
+async function read(key,fallback){if(remote){const url=`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`;const headers={apikey:sk,Authorization:`Bearer ${sk}`};const r=await fetch(url,{headers});if(r.ok)return r.json();if(r.status!==404)throw Error('Storage read failed '+r.status);if(key==='catalog'||key==='prices'){// Seed only missing reference files; never overwrite existing Supabase data.
+ const seed=JSON.stringify(fallback);const created=await fetch(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','x-upsert':'false'},body:seed});
+ if(!created.ok&&created.status!==409)throw Error('Storage seed failed '+created.status);
+ const verified=await fetch(url,{headers});if(!verified.ok)throw Error('Storage seed verification failed '+verified.status);
+ const saved=await verified.json();if(!Array.isArray(saved)||saved.length!==fallback.length)throw Error('Storage seed verification count mismatch for '+key);
+ return saved;
+ }}else{const f=path.join(base,key+'.json');if(fs.existsSync(f))return JSON.parse(fs.readFileSync(f));}return structuredClone(fallback);}
 async function write(key,value){const json=JSON.stringify(value);if(remote){const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{method:'POST',headers:{apikey:sk,Authorization:`Bearer ${sk}`,'Content-Type':'application/json','x-upsert':'true'},body:json});if(!r.ok)throw Error('Storage write failed '+r.status);}else fs.writeFileSync(path.join(base,key+'.json'),json);}
 const cat=()=>read('catalog',seedCatalog);const prices=()=>read('prices',seedPrices);const norm=v=>String(v??'').trim().toUpperCase().replace(/\s+/g,'');
 const num=v=>v===null||v===undefined||v===''?null:Number(v);
