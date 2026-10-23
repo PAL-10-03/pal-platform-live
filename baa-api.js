@@ -3,20 +3,47 @@ const seedCatalog=require('./data/catalog.json');const seedPrices=require('./dat
 const base=path.join(__dirname,'data','baa-runtime');fs.mkdirSync(base,{recursive:true});
 const su=(process.env.SUPABASE_URL||'').replace(/\/$/,'');const sk=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY||'';const bucket=process.env.PAL_SUPABASE_BUCKET||'pal-private-documents';const remote=!!(su&&sk);
 const safeId=s=>/^[a-zA-Z0-9_-]{1,90}$/.test(s||'');
-async function read(key,fallback){if(remote){const url=`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`;const headers={apikey:sk,Authorization:`Bearer ${sk}`};const r=await fetch(url,{headers});if(r.ok)return r.json();
- // Supabase Storage may return HTTP 400 for a missing object, with a JSON error indicating not_found.
- // Do not treat unrelated HTTP 400 errors as missing files.
- const errorBody=await r.text();let detail={};try{detail=JSON.parse(errorBody);}catch(_){}
- const description=[detail.error,detail.message,detail.statusCode,detail.code].filter(Boolean).join(' ').toLowerCase();
- const missing=r.status===404||(r.status===400&&(/not[_ -]?found|no such object|object does not exist|resource not found/.test(description)||String(detail.statusCode)==='404'));
- if(!missing)throw Error('Storage read failed '+r.status+(description?' ('+description.slice(0,180)+')':''));
- if(key==='catalog'||key==='prices'){// Seed only missing reference files; never overwrite existing Supabase data.
- const seed=JSON.stringify(fallback);const created=await fetch(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','x-upsert':'false'},body:seed});
- if(!created.ok&&created.status!==409)throw Error('Storage seed failed '+created.status);
- const verified=await fetch(url,{headers});if(!verified.ok)throw Error('Storage seed verification failed '+verified.status);
- const saved=await verified.json();if(!Array.isArray(saved)||saved.length!==fallback.length)throw Error('Storage seed verification count mismatch for '+key);
- return saved;
- }}else{const f=path.join(base,key+'.json');if(fs.existsSync(f))return JSON.parse(fs.readFileSync(f));}return structuredClone(fallback);}
+// Initialize only the two bundled reference datasets when their remote objects
+// do not yet exist. Never overwrite an existing remote catalog or price list.
+const seedKeys=new Set(['catalog','prices']);
+const seedInFlight=new Map();
+async function readRemote(key){
+ const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{headers:{apikey:sk,Authorization:`Bearer ${sk}`}});
+ if(r.ok)return {found:true,value:await r.json()};
+ if(r.status===404)return {found:false};
+ throw Error('Storage read failed '+r.status+' for '+key);
+}
+async function initializeSeed(key,fallback){
+ if(seedInFlight.has(key))return seedInFlight.get(key);
+ const task=(async()=>{
+  // Recheck before writing in case another request initialized the file.
+  const existing=await readRemote(key);
+  if(existing.found)return existing.value;
+  const json=JSON.stringify(fallback);
+  // No upsert: an existing object must never be replaced by bundled seed data.
+  const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{
+   method:'POST',headers:{apikey:sk,Authorization:`Bearer ${sk}`,'Content-Type':'application/json'},body:json
+  });
+  if(!r.ok){
+   // Concurrent first-time initialization may have created the object.
+   if(r.status===409){const raced=await readRemote(key);if(raced.found)return raced.value;}
+   throw Error('Storage initialization failed '+r.status+' for '+key);
+  }
+  const verified=await readRemote(key);
+  if(!verified.found||JSON.stringify(verified.value)!==json)throw Error('Storage verification failed for '+key);
+  console.log('Supabase seed initialized and verified: '+key+' ('+fallback.length+' records)');
+  return verified.value;
+ })();
+ seedInFlight.set(key,task);
+ try{return await task;}finally{seedInFlight.delete(key);}
+}
+async function read(key,fallback){if(remote){
+ const result=await readRemote(key);
+ if(result.found)return result.value;
+ if(seedKeys.has(key))return initializeSeed(key,fallback);
+ }else{const f=path.join(base,key+'.json');if(fs.existsSync(f))return JSON.parse(fs.readFileSync(f));}
+ return structuredClone(fallback);
+}
 async function write(key,value){const json=JSON.stringify(value);if(remote){const r=await fetch(`${su}/storage/v1/object/${bucket}/born-again-air/app/${key}.json`,{method:'POST',headers:{apikey:sk,Authorization:`Bearer ${sk}`,'Content-Type':'application/json','x-upsert':'true'},body:json});if(!r.ok)throw Error('Storage write failed '+r.status);}else fs.writeFileSync(path.join(base,key+'.json'),json);}
 const cat=()=>read('catalog',seedCatalog);const prices=()=>read('prices',seedPrices);const norm=v=>String(v??'').trim().toUpperCase().replace(/\s+/g,'');
 const num=v=>v===null||v===undefined||v===''?null:Number(v);
