@@ -105,3 +105,13 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 .baa-admin-price-row .baa-admin-buttons{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:repeat(2,52px);gap:10px;margin-top:auto;width:100%;}
 .baa-admin-price-row .baa-admin-buttons button{display:flex;align-items:center;justify-content:center;width:100%;height:52px;min-height:52px;max-height:52px;margin:0;box-sizing:border-box;padding:7px 12px;font-size:12px;line-height:1.2;white-space:normal;}
 @media(max-width:650px){.baa-admin-price-row > .baa-admin-panel h3{min-height:0;}.baa-admin-price-row > .baa-admin-panel{min-height:0;}}
+
+/* Four equal database/price cards. Visual-only; existing control IDs retained. */
+.baa-admin-four-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:22px;align-items:stretch}
+.baa-admin-four-row>.baa-admin-panel{display:flex;flex-direction:column;min-width:0;min-height:270px;padding:18px!important}
+.baa-admin-four-row>.baa-admin-panel h3{display:flex;align-items:center;justify-content:center;text-align:center;min-height:48px;margin:0 0 14px;font-size:15px;line-height:1.3}
+.baa-admin-four-row>.baa-admin-panel input[type=file]{box-sizing:border-box;width:100%;min-width:0;height:49px;margin:0 0 15px;padding:10px 7px;font-size:11px}
+.baa-admin-four-row .baa-admin-buttons{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:repeat(2,52px);gap:10px;width:100%;margin-top:auto}
+.baa-admin-four-row .baa-admin-buttons button{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;height:52px;min-height:52px;max-height:52px;margin:0;padding:7px 10px;font-size:12px;line-height:1.2;text-align:center;white-space:normal}
+@media(max-width:850px){.baa-admin-four-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:500px){.baa-admin-four-row{grid-template-columns:minmax(0,1fr)}.baa-admin-four-row>.baa-admin-panel{min-height:245px}}
