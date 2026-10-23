@@ -45,7 +45,7 @@ app.get('/company/:company',(req,res)=>{
   res.set('Cache-Control','no-store');
   return res.send(html(req,company==='born-again-air'?'baa':'newstart','Company Workspace'));
 });
-app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');const member=membership(req);if(member.role==='manager'&&member.companies.includes('born-again-air'))return res.redirect('/company/born-again-air');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
+app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
 // Temporary owner-access diagnostic. Remove after troubleshooting.
 app.get('/api/owner-diagnostic', (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -62,7 +62,7 @@ app.get('/api/owner-diagnostic', (req, res) => {
 app.get('/api/me',(req,res)=>{if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});res.set('Cache-Control','no-store');res.json({userId:getAuth(req).userId,...membership(req)});});
 // Optional private Supabase Storage documents. Service key stays SERVER SIDE.
 const supaUrl=(process.env.SUPABASE_URL||'').replace(/\/$/,'');
-const supaKey=process.env.SUPABASE_SERVICE_ROLE_KEY||'';
+const supaKey=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY||'';
 const bucket=process.env.PAL_SUPABASE_BUCKET||'pal-private-documents';
 const storageReady=Boolean(supaUrl&&supaKey);
 function storageHeaders(extra={}){return {apikey:supaKey,Authorization:`Bearer ${supaKey}`,...extra};}
