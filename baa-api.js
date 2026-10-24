@@ -223,22 +223,31 @@ app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
   const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});return res.send(Buffer.from(data));
  }
 
- for(const [col,title] of (b.type==='compressor-shipping'?[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Core Charge'],['K','Total Price']]:[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Total Price']]))sh.getCell(col+'1').value=title;
+ // Core Shipping and Core Receiving only: merged identification row and white spacer.
+ const coreHeading=b.type==='core-receiving'?'CORES RECEIVING':'CORES';
+ for(const [range,anchor,label] of [['A1:D1','A1',coreHeading],['E1:H1','E1','CUSTOMER'],['I1:K1','I1','DATE']]){
+  sh.mergeCells(range);const cell=sh.getCell(anchor);cell.value=label;
+  cell.font={name:'Calibri',bold:true,size:13,color:{argb:'FF111111'}};
+  cell.alignment={vertical:'middle',horizontal:'left',indent:1};
+  cell.border={bottom:{style:'thin',color:{argb:'FF9AA4AE'}}};
+ }
+ sh.getRow(1).height=27;sh.getRow(2).height=16;
+ for(const [col,title] of (b.type==='compressor-shipping'?[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Core Charge'],['K','Total Price']]:[['A','Core Number'],['C','Part Number'],['E','Qty'],['G','Price Per Unit'],['I','Total Price']]))sh.getCell(col+'3').value=title;
  for(const [col,width] of [['A',20],['B',5],['C',20],['D',5],['E',12],['F',5],['G',20],['H',5],['I',20],['J',5],['K',20]])sh.getColumn(col).width=width;
- for(const col of (b.type==='compressor-shipping'?['A','C','E','G','I','K']:['A','C','E','G','I'])){const c=sh.getCell(col+'1');c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={vertical:'middle'};}
- sh.getRow(1).height=23;const money='"$"#,##0.00';
- [...b.items].sort((a,b)=>{const x=String(a.core??""),y=String(b.core??"");return x.localeCompare(y,undefined,{numeric:true,sensitivity:"base"});}).forEach((x,i)=>{const n=i+2;sh.getCell(`A${n}`).value=x.core||null;sh.getCell(`C${n}`).value=x.part||null;sh.getCell(`E${n}`).value=x.qty;
+ for(const col of (b.type==='compressor-shipping'?['A','C','E','G','I','K']:['A','C','E','G','I'])){const c=sh.getCell(col+'3');c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF142743'}};c.alignment={vertical:'middle'};}
+ sh.getRow(3).height=23;const money='"$"#,##0.00';
+ [...b.items].sort((a,b)=>{const x=String(a.core??""),y=String(b.core??"");return x.localeCompare(y,undefined,{numeric:true,sensitivity:"base"});}).forEach((x,i)=>{const n=i+4;sh.getCell(`A${n}`).value=x.core||null;sh.getCell(`C${n}`).value=x.part||null;sh.getCell(`E${n}`).value=x.qty;
   if(b.type!=='core-receiving'&&x.price!==null&&x.price!==undefined){const unit=Number(x.price);if(b.type==='compressor-shipping'){const base=Number(x.basePrice??65.5),charge=Number(x.coreCharge??Math.max(0,unit-base));sh.getCell(`G${n}`).value=base;sh.getCell(`I${n}`).value=charge;sh.getCell(`K${n}`).value={formula:`E${n}*(G${n}+I${n})`,result:Number(x.qty)*(base+charge)};sh.getCell(`J${n}`).value=x.priceSource==='a'?'*':x.priceSource==='b'?'**':null;}else{sh.getCell(`G${n}`).value=unit;sh.getCell(`I${n}`).value={formula:`E${n}*G${n}`,result:Number(x.qty)*unit};sh.getCell(`H${n}`).value=x.priceSource==='a'?'*':x.priceSource==='b'?'**':null;}}
   sh.getCell(`G${n}`).numFmt=money;sh.getCell(`I${n}`).numFmt=money;sh.getCell(`K${n}`).numFmt=money;
  });
  // Three completely blank rows between the final item and the totals row.
- const t=b.items.length+5;sh.getCell(`C${t}`).value='TOTAL';
- sh.getCell(`E${t}`).value={formula:`SUM(E2:E${t-1})`,result:b.items.reduce((sum,x)=>sum+Number(x.qty||0),0)};
- sh.getCell(`${b.type==='compressor-shipping'?'K':'I'}${t}`).value=b.type==='core-receiving'?(b.receivingTotal??null):{formula:`SUM(${b.type==='compressor-shipping'?'K':'I'}2:${b.type==='compressor-shipping'?'K':'I'}${t-1})`,result:b.items.reduce((sum,x)=>sum+(x.price===null||x.price===undefined?0:Number(x.qty)*Number(x.price)),0)};
+ const t=b.items.length+7;sh.getCell(`C${t}`).value='TOTAL';
+ sh.getCell(`E${t}`).value={formula:`SUM(E4:E${t-1})`,result:b.items.reduce((sum,x)=>sum+Number(x.qty||0),0)};
+ sh.getCell(`${b.type==='compressor-shipping'?'K':'I'}${t}`).value=b.type==='core-receiving'?(b.receivingTotal??null):{formula:`SUM(${b.type==='compressor-shipping'?'K':'I'}4:${b.type==='compressor-shipping'?'K':'I'}${t-1})`,result:b.items.reduce((sum,x)=>sum+(x.price===null||x.price===undefined?0:Number(x.qty)*Number(x.price)),0)};
  sh.getCell(`${b.type==='compressor-shipping'?'K':'I'}${t}`).numFmt=money;sh.getCell(`${b.type==='compressor-shipping'?'K':'I'}${t}`).font={bold:true,underline:'double'};sh.getCell(`C${t}`).font={bold:true};sh.getCell(`E${t}`).font={bold:true};
  const missing=b.type!=='core-receiving'&&b.items.some(x=>x.price===null||x.price===undefined);
  if(missing)sh.getCell(`A${t+2}`).value='WARNING: Missing prices; total excludes unpriced items.';
- sh.views=[{state:'frozen',ySplit:1}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:${b.type==='compressor-shipping'?'K':'I'}${missing?t+2:t}`};
+ sh.views=[{state:'frozen',ySplit:3}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:${b.type==='compressor-shipping'?'K':'I'}${missing?t+2:t}`};
  const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});res.send(Buffer.from(data));
  }catch(e){res.status(500).json({error:e.message});}});
 
