@@ -93,6 +93,28 @@ app.post('/api/owner/files/:company/link',requireOwner,requireCompany,express.js
     const r=await fetch(url,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});
   }catch(e){console.error('Storage link error',e.message);storageError(res);}
 });
+// Born Again Air customer Document Center. Uses same private Supabase bucket as owner storage.
+function baaDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('born-again-air'))return res.status(403).json({error:'Born Again Air access required'});next();}
+const baaDocPrefix='born-again-air/documents/';
+function safeDocName(name){return typeof name==='string'&&/^\d{13}-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}$/.test(name);}
+app.get('/api/baa/documents',baaDocumentAccess,async(_req,res)=>{
+ if(!storageReady)return res.json({configured:false,files:[]});
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix:baaDocPrefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const data=await r.json();res.json({configured:true,files:(Array.isArray(data)?data:[]).filter(x=>safeDocName(x.name)).map(x=>({name:x.name,displayName:x.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:x.created_at,size:x.metadata?.size||0}))});}catch(e){console.error('BAA documents list',e.message);storageError(res);}
+});
+app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
+ if(!storageReady)return res.status(503).json({error:'Private Supabase storage must be configured first'});
+ let name;try{name=decodeURIComponent(String(req.headers['x-pal-filename']||''));}catch{return res.status(400).json({error:'Invalid filename'});}
+ if(!/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}\.(pdf|png|jpe?g)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG and PNG documents are supported'});
+ if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:'Empty document'});
+ const isPdf=req.body.subarray(0,5).toString()==='%PDF-';const isPng=req.body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));const isJpg=req.body.subarray(0,3).equals(Buffer.from([255,216,255]));
+ if(!(isPdf&&/\.pdf$/i.test(name)||isPng&&/\.png$/i.test(name)||isJpg&&/\.jpe?g$/i.test(name)))return res.status(400).json({error:'File contents do not match the supported document type'});
+ const id=require('crypto').randomBytes(6).toString('hex');const stored=`${Date.now()}-${id}-${name}`;
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);res.status(201).json({ok:true,name:stored,uploaded_at:new Date().toISOString()});}catch(e){console.error('BAA document upload',e.message);storageError(res);}
+});
+app.post('/api/baa/documents/link',baaDocumentAccess,express.json({limit:'5kb'}),async(req,res)=>{
+ const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(name)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});}catch(e){console.error('BAA document download',e.message);storageError(res);}
+});
 require('./baa-api')(app,{manager:req=>membership(req).companies.includes('born-again-air')&&(isOwner(req)||membership(req).role==='manager'),user:req=>getAuth(req).userId});
 app.use(express.json({limit:'100kb'}));
 app.use((_req,res)=>res.status(404).send('Page not found'));
