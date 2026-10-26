@@ -5,10 +5,11 @@ const { clerkMiddleware, getAuth } = require('@clerk/express');
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.disable('x-powered-by');
+app.use((req,res,next)=>{if(!req.path.startsWith('/api/')&&!req.path.startsWith('/assets/'))res.set('Cache-Control','no-store, no-cache, must-revalidate');next();});
 app.set('trust proxy', 1);
 const origins = (process.env.CLERK_AUTHORIZED_PARTIES || 'https://palbiz.app,https://www.palbiz.app').split(',').map(x=>x.trim()).filter(Boolean);
 app.use(clerkMiddleware({authorizedParties: origins}));
-app.use('/assets',express.static(path.join(__dirname,'public'),{index:false,maxAge:'1h'}));
+app.use('/assets',express.static(path.join(__dirname,'public'),{index:false,maxAge:0,setHeaders(res){res.setHeader('Cache-Control','no-store, max-age=0');}}));
 const ownerId = process.env.PAL_OWNER_CLERK_USER_ID || '';
 const companies = [{id:'born-again-air',name:'Born Again Air',short:'BAA'},{id:'newstart',name:'Newstart',short:'NS'}];
 const isOwner = req => Boolean(ownerId && getAuth(req).userId === ownerId);
@@ -28,7 +29,7 @@ function membership(req){
 function html(req,view,title){
   const state={view,publishableKey:process.env.CLERK_PUBLISHABLE_KEY||'',signedIn:isSignedIn(req),owner:isOwner(req),membership:membership(req),companies,dropbox:{'born-again-air':process.env.PAL_BAA_DROPBOX_URL||'',newstart:process.env.PAL_NEWSTART_DROPBOX_URL||''}};
   const safe=JSON.stringify(state).replace(/</g,'\\u003c');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script><script src="/assets/app.js" defer></script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css?v=baa-excel-20261026-verified2"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script><script src="/assets/app.js?v=baa-excel-20261026-verified2" defer></script></body></html>`;
 }
 function requireOwner(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!isOwner(req))return res.status(403).json({error:'Owner access required'});next();}
 function requireCompany(req,res,next){const c=req.params.company;if(!companies.some(x=>x.id===c))return res.status(404).json({error:'Company not found'});if(!membership(req).companies.includes(c))return res.status(403).json({error:'No access to this company'});next();}
