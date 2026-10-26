@@ -79,7 +79,7 @@ app.get('/api/owner/files/:company',requireOwner,requireCompany,async(req,res)=>
 app.post('/api/owner/files/:company',requireOwner,requireCompany,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
   if(!storageReady)return res.status(503).json({error:'Configure Supabase Storage before uploading files.'});
   const name=String(req.headers['x-pal-filename']||'').trim();
-  if(!/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}$/.test(name)||name==='.'||name==='..')return res.status(400).json({error:'Invalid filename'});
+  if(!/^[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.test(name)||name==='.'||name==='..')return res.status(400).json({error:'Invalid filename'});
   if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:'Empty file'});
   const safeName=`${Date.now()}-${name}`;
   try{const url=`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${storagePath(req.params.company,encodeURIComponent(safeName))}`;
@@ -89,7 +89,7 @@ app.post('/api/owner/files/:company',requireOwner,requireCompany,express.raw({ty
 app.post('/api/owner/files/:company/link',requireOwner,requireCompany,express.json({limit:'5kb'}),async(req,res)=>{
   if(!storageReady)return res.status(503).json({error:'Storage not configured'});
   const name=req.body?.name;
-  if(typeof name!=='string'||!/^\d{13}-[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}$/.test(name))return res.status(400).json({error:'Invalid file name'});
+  if(typeof name!=='string'||!/^\d{13}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.test(name))return res.status(400).json({error:'Invalid file name'});
   try{const url=`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${storagePath(req.params.company,encodeURIComponent(name))}`;
     const r=await fetch(url,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});
   }catch(e){console.error('Storage link error',e.message);storageError(res);}
@@ -97,7 +97,7 @@ app.post('/api/owner/files/:company/link',requireOwner,requireCompany,express.js
 // Born Again Air customer Document Center. Uses same private Supabase bucket as owner storage.
 function baaDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('born-again-air'))return res.status(403).json({error:'Born Again Air access required'});next();}
 const baaDocPrefix='born-again-air/documents/';
-function safeDocName(name){return typeof name==='string'&&/^\d{13}-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}$/.test(name);}
+function safeDocName(name){return typeof name==='string'&&/^\d{13}-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.test(name);}
 app.get('/api/baa/documents',baaDocumentAccess,async(_req,res)=>{
  if(!storageReady)return res.json({configured:false,files:[]});
  try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix:baaDocPrefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const data=await r.json();res.json({configured:true,files:(Array.isArray(data)?data:[]).filter(x=>safeDocName(x.name)).map(x=>({name:x.name,displayName:x.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:x.created_at,size:x.metadata?.size||0}))});}catch(e){console.error('BAA documents list',e.message);storageError(res);}
@@ -105,7 +105,7 @@ app.get('/api/baa/documents',baaDocumentAccess,async(_req,res)=>{
 app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
  if(!storageReady)return res.status(503).json({error:'Private Supabase storage must be configured first'});
  let name;try{name=decodeURIComponent(String(req.headers['x-pal-filename']||''));}catch{return res.status(400).json({error:'Invalid filename'});}
- if(!/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG, PNG, XLSX, XLS and CSV documents are supported'});
+ if(!/^[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG, PNG, XLSX, XLS and CSV documents are supported'});
  if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:'Empty document'});
  const isPdf=req.body.subarray(0,5).toString()==='%PDF-';const isPng=req.body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));const isJpg=req.body.subarray(0,3).equals(Buffer.from([255,216,255]));
  // XLSX is ZIP-based (PK); legacy XLS uses the OLE compound-file signature.
