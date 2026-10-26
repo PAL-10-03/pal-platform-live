@@ -104,10 +104,16 @@ app.get('/api/baa/documents',baaDocumentAccess,async(_req,res)=>{
 app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
  if(!storageReady)return res.status(503).json({error:'Private Supabase storage must be configured first'});
  let name;try{name=decodeURIComponent(String(req.headers['x-pal-filename']||''));}catch{return res.status(400).json({error:'Invalid filename'});}
- if(!/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}\.(pdf|png|jpe?g)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG and PNG documents are supported'});
+ if(!/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG, PNG, XLSX, XLS and CSV documents are supported'});
  if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:'Empty document'});
  const isPdf=req.body.subarray(0,5).toString()==='%PDF-';const isPng=req.body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));const isJpg=req.body.subarray(0,3).equals(Buffer.from([255,216,255]));
- if(!(isPdf&&/\.pdf$/i.test(name)||isPng&&/\.png$/i.test(name)||isJpg&&/\.jpe?g$/i.test(name)))return res.status(400).json({error:'File contents do not match the supported document type'});
+ // XLSX is ZIP-based (PK); legacy XLS uses the OLE compound-file signature.
+ // CSV must be plain text, not a renamed executable or binary file.
+ const isXlsx=req.body.subarray(0,4).equals(Buffer.from([80,75,3,4]));
+ const isXls=req.body.subarray(0,8).equals(Buffer.from([208,207,17,224,161,177,26,225]));
+ const csvSample=req.body.subarray(0,Math.min(req.body.length,65536));
+ const isCsv=!csvSample.includes(0)&&!csvSample.some(byte=>byte<9||(byte>13&&byte<32))&&new TextDecoder('utf-8',{fatal:false}).decode(csvSample).includes(',');
+ if(!(isPdf&&/\.pdf$/i.test(name)||isPng&&/\.png$/i.test(name)||isJpg&&/\.jpe?g$/i.test(name)||isXlsx&&/\.xlsx$/i.test(name)||isXls&&/\.xls$/i.test(name)||isCsv&&/\.csv$/i.test(name)))return res.status(400).json({error:'File contents do not match the supported document type'});
  const id=require('crypto').randomBytes(6).toString('hex');const stored=`${Date.now()}-${id}-${name}`;
  try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);res.status(201).json({ok:true,name:stored,uploaded_at:new Date().toISOString()});}catch(e){console.error('BAA document upload',e.message);storageError(res);}
 });
