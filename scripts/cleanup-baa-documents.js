@@ -1,6 +1,6 @@
 'use strict';
 // Run daily from an external scheduler (e.g., a Render Cron Job).
-// A persisted Supabase marker makes actual cleanup happen no more than once every 31 days.
+// Daily scheduled run: delete files at least 32 full days old.
 // Deletion is deliberately opt-in until the accounting-record retention plan is confirmed.
 require('dotenv').config();
 const crypto = require('node:crypto');
@@ -10,7 +10,6 @@ const bucket = process.env.PAL_SUPABASE_BUCKET || 'pal-private-documents';
 const prefix = 'born-again-air/documents/';
 const markerPath = 'born-again-air/retention/last-cleanup.json';
 const auditPrefix = 'born-again-air/retention/audits/';
-const intervalMs = 31 * 86400000;
 const ageMs = 32 * 86400000;
 const enabled = process.env.PAL_CLEANUP_ENABLE_DELETE === 'true';
 if (!url || !key) { console.error('Supabase credentials missing.'); process.exit(1); }
@@ -56,7 +55,7 @@ async function listAll() {
 }
 function eligible(file, now) {
   if (!file || typeof file.name !== 'string') return false;
-  const match = /^(\d{13})-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ -]{0,119}$/.exec(file.name);
+  const match = /^(\d{13})-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.exec(file.name);
   if (!match) return false; // Never delete legacy, unrecognized, or app/box files.
   const fromName = Number(match[1]);
   const created = Date.parse(file.created_at || '');
@@ -66,12 +65,6 @@ function eligible(file, now) {
 }
 async function main() {
   const now = Date.now();
-  const marker = await getMarker();
-  const last = Date.parse(marker?.lastCompletedAt || '');
-  if (Number.isFinite(last) && now - last < intervalMs) {
-    console.log('Cleanup not due yet. Last completed:', marker.lastCompletedAt);
-    return;
-  }
   const files = (await listAll()).filter(f => eligible(f, now));
   console.log(JSON.stringify({ event: 'baa_cleanup_scan', eligible: files.length, deletionEnabled: enabled, timestamp: new Date(now).toISOString() }));
   if (!enabled) {

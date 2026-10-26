@@ -118,6 +118,23 @@ app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/o
  const id=require('crypto').randomBytes(6).toString('hex');const stored=`${Date.now()}-${id}-${name}`;
  try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);res.status(201).json({ok:true,name:stored,uploaded_at:new Date().toISOString()});}catch(e){console.error('BAA document upload',e.message);storageError(res);}
 });
+// Explicit document deletion: manager or PAL owner only. Never delete unrelated box or price files.
+app.post('/api/baa/documents/delete',baaDocumentAccess,express.json({limit:'50kb'}),async(req,res)=>{
+ if(!(isOwner(req)||membership(req).role==='manager'))return res.status(403).json({error:'Manager access required to delete documents'});
+ if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+ const names=req.body?.names;
+ if(!Array.isArray(names)||!names.length||names.length>100||!names.every(safeDocName)||new Set(names).size!==names.length)return res.status(400).json({error:'Select 1 to 100 valid documents'});
+ try{
+  const paths=names.map(name=>baaDocPrefix+name);
+  const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}`,{method:'DELETE',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefixes:paths})});
+  if(!r.ok){console.error('Document deletion rejected by Supabase',r.status,(await r.text()).slice(0,300));return storageError(res);}
+  const result=await r.json();
+  const removed=Array.isArray(result)?result:result?.data;
+  if(!Array.isArray(removed)||removed.length!==names.length)return res.status(502).json({error:'Deletion result needs verification. Refresh the document list.'});
+  console.info('BAA document deletion',JSON.stringify({actor:getAuth(req).userId,count:removed.length,at:new Date().toISOString()}));
+  res.json({ok:true,deleted:removed.length});
+ }catch(e){console.error('BAA document deletion error',e.message);storageError(res);}
+});
 app.post('/api/baa/documents/link',baaDocumentAccess,express.json({limit:'5kb'}),async(req,res)=>{
  const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
  try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(name)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});}catch(e){console.error('BAA document download',e.message);storageError(res);}
