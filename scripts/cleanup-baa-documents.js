@@ -1,16 +1,15 @@
 'use strict';
-// Run daily from an external scheduler (e.g., a Render Cron Job).
-// Daily scheduled run: delete files at least 10 full days old.
-// Deletion is deliberately opt-in until the accounting-record retention plan is confirmed.
+// Fail-closed cleanup: only BAA Document Uploads files with independently verified
+// QuickBooks transaction AND attachment proof are eligible after a 24-hour buffer.
 require('dotenv').config();
 const crypto = require('node:crypto');
 const url = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const bucket = process.env.PAL_SUPABASE_BUCKET || 'pal-private-documents';
 const prefix = 'born-again-air/documents/';
-const markerPath = 'born-again-air/retention/last-cleanup.json';
+const proofPrefix = 'born-again-air/retention/verified/';
 const auditPrefix = 'born-again-air/retention/audits/';
-const ageMs = 10 * 86400000;
+const bufferMs = 24 * 60 * 60 * 1000;
 const enabled = process.env.PAL_CLEANUP_ENABLE_DELETE === 'true';
 if (!url || !key) { console.error('Supabase credentials missing.'); process.exit(1); }
 const headers = { apikey: key, Authorization: `Bearer ${key}` };
@@ -23,22 +22,6 @@ async function request(path, options = {}) {
     throw error;
   }
   return response;
-}
-async function getMarker() {
-  try {
-    const response = await request(`object/${encodeURIComponent(bucket)}/${markerPath}`);
-    return await response.json();
-  } catch (error) {
-    if (error.status === 404 || (error.status === 400 && /not found/i.test(error.message))) return null;
-    throw error;
-  }
-}
-async function writeJson(path, value) {
-  await request(`object/${encodeURIComponent(bucket)}/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-upsert': 'true' },
-    body: JSON.stringify(value),
-  });
 }
 async function listAll() {
   const all = [];
@@ -53,40 +36,60 @@ async function listAll() {
     if (batch.length < 1000) return all;
   }
 }
-function eligible(file, now) {
-  if (!file || typeof file.name !== 'string') return false;
-  const match = /^(\d{13})-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.exec(file.name);
-  if (!match) return false; // Never delete legacy, unrecognized, or app/box files.
-  const fromName = Number(match[1]);
-  const created = Date.parse(file.created_at || '');
-  // Use the newer timestamp, so a mismatched timestamp cannot delete a young upload.
-  const uploaded = Math.max(fromName, Number.isFinite(created) ? created : fromName);
-  return uploaded <= now - ageMs;
+const safeDocName = name => typeof name === 'string' && /^\d{13}-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name);
+const proofPath = name => `${proofPrefix}${crypto.createHash('sha256').update(`${prefix}${name}`).digest('hex')}.json`;
+async function getProof(name) {
+  try {
+    const response = await request(`object/${encodeURIComponent(bucket)}/${proofPath(name)}`);
+    return await response.json();
+  } catch (error) {
+    if (error.status === 404 || (error.status === 400 && /not found/i.test(error.message))) return null;
+    throw error;
+  }
+}
+function verified(file, proof, now) {
+  if (!safeDocName(file.name) || !proof || typeof proof !== 'object') return false;
+  if (proof.schemaVersion !== 1 || proof.tenant !== 'born-again-air' || proof.status !== 'verified') return false;
+  if (proof.storagePath !== `${prefix}${file.name}` || proof.destination !== 'quickbooks-online') return false;
+  if (typeof proof.transactionId !== 'string' || !proof.transactionId.trim()) return false;
+  if (typeof proof.attachmentId !== 'string' || !proof.attachmentId.trim()) return false;
+  if (proof.transactionConfirmed !== true || proof.attachmentConfirmed !== true) return false;
+  const verifiedAt = Date.parse(proof.verifiedAt || '');
+  const uploadedAt = Date.parse(file.created_at || '');
+  if (!Number.isFinite(verifiedAt) || !Number.isFinite(uploadedAt)) return false;
+  if (verifiedAt > now || uploadedAt > now) return false;
+  if (verifiedAt < uploadedAt || now - verifiedAt < bufferMs) return false;
+  return true;
+}
+async function writeJson(path, value) {
+  await request(`object/${encodeURIComponent(bucket)}/${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: JSON.stringify(value),
+  });
 }
 async function main() {
   const now = Date.now();
-  const files = (await listAll()).filter(f => eligible(f, now));
-  console.log(JSON.stringify({ event: 'baa_cleanup_scan', eligible: files.length, deletionEnabled: enabled, timestamp: new Date(now).toISOString() }));
-  if (!enabled) {
-    console.log('DRY RUN: No files deleted. Set PAL_CLEANUP_ENABLE_DELETE=true only after approving document retention.');
-    return;
+  const all = (await listAll()).filter(f => safeDocName(f.name));
+  const eligible = [];
+  for (const file of all) {
+    const proof = await getProof(file.name);
+    if (verified(file, proof, now)) eligible.push({ file, proof });
   }
-  // Supabase remove API accepts paths relative to bucket; use batches of <=1000.
+  console.log(JSON.stringify({ event: 'baa_verified_cleanup_scan', documentsScanned: all.length, verifiedAndEligible: eligible.length, deletionEnabled: enabled, timestamp: new Date(now).toISOString() }));
+  if (!enabled) { console.log('DRY RUN: No documents deleted.'); return; }
   const deleted = [];
-  for (let i = 0; i < files.length; i += 100) {
-    const paths = files.slice(i, i + 100).map(f => `${prefix}${f.name}`);
-    await request(`object/${encodeURIComponent(bucket)}`, {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefixes: paths }),
+  // Delete one at a time to make auditing precise and avoid batch ambiguity.
+  for (const { file } of eligible) {
+    const path = `${prefix}${file.name}`;
+    const response = await request(`object/${encodeURIComponent(bucket)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixes: [path] }),
     });
-    deleted.push(...paths);
+    const result = await response.json();
+    if (!Array.isArray(result) || result.length !== 1) throw new Error(`Deletion could not be confirmed for ${file.name}`);
+    deleted.push({ path, proofPath: proofPath(file.name) });
   }
   const completedAt = new Date().toISOString();
-  const audit = { completedAt, cutoff: new Date(now - ageMs).toISOString(), deletedCount: deleted.length,
-    deleted: deleted.map(p => ({ path: p, filenameSha256: crypto.createHash('sha256').update(p).digest('hex') })) };
   const auditName = `${auditPrefix}${completedAt.replace(/[:.]/g, '-')}-${crypto.randomBytes(3).toString('hex')}.json`;
-  await writeJson(auditName, audit);
-  await writeJson(markerPath, { lastCompletedAt: completedAt, deletedCount: deleted.length, auditPath: auditName });
-  console.log(`Cleanup complete: ${deleted.length} eligible BAA documents deleted; audit stored at ${auditName}`);
+  await writeJson(auditName, { completedAt, deletedCount: deleted.length, deleted });
+  console.log(`Cleanup complete: ${deleted.length} verified BAA Document Uploads files deleted; audit ${auditName}`);
 }
-main().catch(error => { console.error('Cleanup failed; check the logs and rerun safely:', error.message); process.exitCode = 1; });
+main().catch(error => { console.error('Cleanup failed:', error.message); process.exitCode = 1; });

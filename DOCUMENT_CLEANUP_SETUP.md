@@ -1,26 +1,38 @@
-# Born Again Air Document Center — retention job setup
+# Born Again Air — Verified Processing Cleanup (replaces 10-day rule)
 
-This ZIP adds XLSX, XLS, and CSV support to the existing PDF/JPG/PNG Document Center. It does not modify `baa-api.js` (box calculations, prices, Excel exports or labels).
+**Scope:** Only objects under `pal-private-documents/born-again-air/documents/` with the exact Document Uploads naming format. This job does NOT delete price lists, databases, boxes, reports, or other tenant data.
 
-## Important: deployment is a separate step
+**Permanent policy:** No deletion based on age. A Document Uploads file can be deleted only after a trusted future accounting integration has verified that the original document is attached to a confirmed QuickBooks Online transaction, and **24 hours** have elapsed since verification. Missing, incomplete, inconsistent, or unknown verification = KEEP.
 
-The cleanup code is **included but NOT scheduled by deploying the web service ZIP alone**. A scheduler must be configured. In Render, create a separate Cron Job using the same repo and environment variables, with:
+**Current behavior:** The QuickBooks integration and proof writer are **not built**. This ZIP does NOT create verification records, and does not allow a user to mark files verified. Existing documents have no verification proof and therefore are **not eligible** for deletion. This is intentional. Do not fabricate verification records for testing against real documents.
 
-- Command: `node scripts/cleanup-baa-documents.js`
-- Cron schedule: `0 3 * * *` (daily at 03:00 UTC). The job runs daily and removes files **at least 10 full days old** on the first eligible daily run.
-- Environment: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`, and optionally `PAL_SUPABASE_BUCKET` (default `pal-private-documents`).
-- Start with `PAL_CLEANUP_ENABLE_DELETE=false`. Run once and check logs for the eligible count. Only set `PAL_CLEANUP_ENABLE_DELETE=true` **after** approving record retention and verifying necessary source documents are preserved elsewhere.
+## Proof contract for the future QuickBooks integration
 
-Each run checks the `born-again-air/documents/` prefix **only**, and only recognizes the Document Center's timestamp-prefixed filenames. It deletes files **at least 10 full days old** (using the later of the upload filename timestamp and Supabase `created_at`). It never targets BAA box records, price lists, or database files.
+Only trusted backend code, **after independently confirming both the QuickBooks transaction and attachment**, may write a JSON object in private Supabase Storage at:
 
-After a successful deletion run it writes an audit and last-run marker in `born-again-air/retention/`, outside the document folder. If the scheduler is offline, the next daily run will pick up the overdue cleanup. Errors stop the job without advancing the marker.
+`born-again-air/retention/verified/<sha256 of the exact UTF-8 storage path>.json`
 
-**Caution:** This system does not yet know whether an uploaded document has been posted to QuickBooks, is under duplicate review, or must be retained for tax/legal reasons. Until accounting retention is implemented, leave deletion disabled or explicitly approve the risk. The audit is not a replacement for the deleted document.
+The storage path hashed is `born-again-air/documents/<stored filename>`. The proof JSON must contain:
 
-To test after deployment: upload a small XLSX, XLS, and CSV file, refresh, download each, and verify the contents. Run the cleanup job in dry-run mode and confirm no current files are eligible. Finally check Supabase Storage's `pal-private-documents/born-again-air/documents/` path and usage.
+```json
+{
+  "schemaVersion": 1,
+  "tenant": "born-again-air",
+  "status": "verified",
+  "storagePath": "born-again-air/documents/<stored filename>",
+  "destination": "quickbooks-online",
+  "transactionId": "<actual confirmed QuickBooks transaction ID>",
+  "attachmentId": "<actual confirmed QuickBooks attachment ID>",
+  "transactionConfirmed": true,
+  "attachmentConfirmed": true,
+  "verifiedAt": "<actual ISO timestamp after upload and verification>"
+}
+```
 
-## Manual deletion
-The Document Center has **Delete Selected** beside **Download Selected**. Only PAL owner and Born Again Air managers can delete; the user must confirm. This permanently deletes the selected originals from Supabase Storage.
+This proof format is a future integration contract, **not** proof that QuickBooks has been connected. Do not add any public/client API that can write this proof. A stronger production design should also use a transactional database and recheck the QuickBooks attachment before deletion to guard against stale or forged proof; this script does not perform a live QuickBooks recheck.
 
-## Activation
-**Deploying the ZIP alone does not schedule cleanup.** In Render, create a Cron Job using the same repository and Supabase environment variables, command `node scripts/cleanup-baa-documents.js`, schedule `0 3 * * *`. Test first with `PAL_CLEANUP_ENABLE_DELETE=false`, then set it to `true` only after verifying the retention policy. This job has no QuickBooks awareness and can delete unmatched or legally necessary originals. Retain accounting records separately.
+## Testing and scheduling
+
+Deploying the web-service ZIP does **not** schedule the job. If creating a Render Cron Job, use command `node scripts/cleanup-baa-documents.js`, schedule `0 3 * * *` (daily at 03:00 UTC), and copy the Supabase environment variables. **Start with `PAL_CLEANUP_ENABLE_DELETE=false`** (default), run the job, and verify `verifiedAndEligible: 0` and `DRY RUN`. Do not enable real deletion until the QuickBooks integration, verification proof, and a disposable-file end-to-end test are complete. With no QuickBooks integration, zero eligible files is expected.
+
+**Manual Delete Selected** remains a separate manager-initiated feature and is unchanged.
