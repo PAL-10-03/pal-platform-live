@@ -1,6 +1,6 @@
 'use strict';
 // Run daily from an external scheduler (e.g., a Render Cron Job).
-// Daily scheduled run: delete files at least 32 full days old.
+// Daily scheduled run: delete files at least 10 full days old.
 // Deletion is deliberately opt-in until the accounting-record retention plan is confirmed.
 require('dotenv').config();
 const crypto = require('node:crypto');
@@ -10,7 +10,7 @@ const bucket = process.env.PAL_SUPABASE_BUCKET || 'pal-private-documents';
 const prefix = 'born-again-air/documents/';
 const markerPath = 'born-again-air/retention/last-cleanup.json';
 const auditPrefix = 'born-again-air/retention/audits/';
-const ageMs = 32 * 86400000;
+const ageMs = 10 * 86400000;
 const enabled = process.env.PAL_CLEANUP_ENABLE_DELETE === 'true';
 if (!url || !key) { console.error('Supabase credentials missing.'); process.exit(1); }
 const headers = { apikey: key, Authorization: `Bearer ${key}` };
