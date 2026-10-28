@@ -207,6 +207,29 @@ app.post('/api/newstart/accounting/accounts/import',newstartManagerAccess,expres
  }
  try{const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
 });
+// Excel-only chart-of-accounts import. No QuickBooks posting or financial actions.
+const ExcelJS = require('exceljs');
+for(const [tenant,apiName,manager] of [['born-again-air','baa',baaManagerAccess],['newstart','newstart',newstartManagerAccess]]){
+ app.post(`/api/${apiName}/accounting/accounts/import-excel`,manager,express.raw({type:'application/octet-stream',limit:'5mb'}),async(req,res)=>{
+  try{
+   if(!Buffer.isBuffer(req.body)||req.body.length<100||req.body.length>5*1024*1024)return res.status(400).json({error:'Upload a valid .xlsx file under 5 MB'});
+   const book=new ExcelJS.Workbook();await book.xlsx.load(req.body);
+   const sheet=book.worksheets[0];if(!sheet)return res.status(400).json({error:'Excel workbook has no worksheet'});
+   const value=c=>String(c?.text||c?.value?.text||c?.value||'').trim();
+   const first=sheet.getRow(1),header=[1,2,3].map(i=>value(first.getCell(i)).toLowerCase());
+   const hasHeader=header.some(x=>/account|number|type|name/.test(x));
+   const rows=[];const names=new Set();
+   sheet.eachRow((row,n)=>{if(n===1&&hasHeader)return;const a=value(row.getCell(1)),b=value(row.getCell(2)),c=value(row.getCell(3));if(!a&&!b&&!c)return;rows.push({account_number:a,account_name:b,account_type:c});});
+   if(!rows.length||rows.length>300)return res.status(400).json({error:'Excel sheet must contain 1 to 300 accounts, with columns Number, Account Name, Account Type'});
+   const cleaned=[];
+   for(const item of rows){const name=item.account_name,number=item.account_number,type=item.account_type;
+    if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or duplicate account. Expected columns: Number, Account Name, Account Type'});
+    names.add(name.toLowerCase());cleaned.push({tenant,account_name:name,account_number:number||null,account_type:type||null,is_active:true});
+   }
+   const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});
+  }catch(e){console.error('Excel accounts import',e.message);res.status(400).json({error:'Could not read Excel accounts. Use a standard .xlsx workbook with Number, Account Name, Account Type columns.'});}
+ });
+}
 // Newstart customer Document Center. Uses same private Supabase bucket as owner storage.
 function newstartDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('newstart'))return res.status(403).json({error:'Newstart access required'});next();}
 const newstartDocPrefix='newstart/documents/';
@@ -312,16 +335,22 @@ for (const [tenant,apiName] of [['born-again-air','baa'],['newstart','newstart']
   const v=req.body||{};const name=String(v.name||'').trim(),status=String(v.contract_status||'unknown'),notes=String(v.manager_notes||'').trim();
   if(!name||name.length>180||!['contracted','noncontracted','unknown','expired'].includes(status)||notes.length>6000)return res.status(400).json({error:'Invalid vendor details'});
   const date=x=>!x?null:/^\d{4}-\d{2}-\d{2}$/.test(x)?x:false;
-  const renewal=date(v.renewal_date),notice=date(v.notice_deadline);if(renewal===false||notice===false)return res.status(400).json({error:'Dates must use YYYY-MM-DD'});
-  try{const saved=await palDb('pal_vendors',{method:'POST',query:'on_conflict=tenant,name',prefer:'resolution=merge-duplicates,return=representation',body:{tenant,name,contract_status:status,manager_notes:notes,renewal_date:renewal,notice_deadline:notice,updated_at:new Date().toISOString()}});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor save failed'});}
+  const renewal=date(v.renewal_date),notice=date(v.notice_deadline),baseline=date(v.baseline_review_date);if(renewal===false||notice===false||baseline===false)return res.status(400).json({error:'Dates must use YYYY-MM-DD'});
+  const interval=Number(v.review_interval_days||30);if(![30,45,60,90].includes(interval))return res.status(400).json({error:'Invalid review interval'});
+  if(status==='noncontracted'&&!baseline)return res.status(400).json({error:'Choose a baseline review date for noncontracted vendors'});
+  const nextReview=status==='noncontracted'?new Date(Date.parse(baseline+'T12:00:00Z')+interval*86400000).toISOString():null;
+  try{const saved=await palDb('pal_vendors',{method:'POST',query:'on_conflict=tenant,name',prefer:'resolution=merge-duplicates,return=representation',body:{tenant,name,contract_status:status,manager_notes:notes,renewal_date:status==='noncontracted'?null:renewal,notice_deadline:status==='noncontracted'?null:notice,baseline_review_date:status==='noncontracted'?baseline:null,review_interval_days:status==='noncontracted'?interval:null,next_review_at:nextReview,updated_at:new Date().toISOString()}});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor save failed'});}
  });
  app.patch(`/api/${apiName}/vendors/:id`,manager,express.json({limit:'15kb'}),async(req,res)=>{
   const id=req.params.id;if(!/^[0-9a-f-]{36}$/i.test(id))return res.status(400).json({error:'Invalid vendor ID'});
   const v=req.body||{},status=String(v.contract_status||'unknown'),notes=String(v.manager_notes||'').trim();
   if(!['contracted','noncontracted','unknown','expired'].includes(status)||notes.length>6000)return res.status(400).json({error:'Invalid vendor details'});
   const date=x=>!x?null:/^\d{4}-\d{2}-\d{2}$/.test(x)?x:false;
-  const renewal=date(v.renewal_date),notice=date(v.notice_deadline);if(renewal===false||notice===false)return res.status(400).json({error:'Invalid date'});
-  try{const saved=await palDb('pal_vendors',{method:'PATCH',query:`tenant=eq.${tenant}&id=eq.${id}`,prefer:'return=representation',body:{contract_status:status,manager_notes:notes,renewal_date:renewal,notice_deadline:notice,updated_at:new Date().toISOString()}});if(!saved.length)return res.status(404).json({error:'Vendor not found in this company'});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor update failed'});}
+  const renewal=date(v.renewal_date),notice=date(v.notice_deadline),baseline=date(v.baseline_review_date);if(renewal===false||notice===false||baseline===false)return res.status(400).json({error:'Invalid date'});
+  const interval=Number(v.review_interval_days||30);if(![30,45,60,90].includes(interval))return res.status(400).json({error:'Invalid review interval'});
+  if(status==='noncontracted'&&!baseline)return res.status(400).json({error:'Choose a baseline review date for noncontracted vendors'});
+  const nextReview=status==='noncontracted'?new Date(Date.parse(baseline+'T12:00:00Z')+interval*86400000).toISOString():null;
+  try{const saved=await palDb('pal_vendors',{method:'PATCH',query:`tenant=eq.${tenant}&id=eq.${id}`,prefer:'return=representation',body:{contract_status:status,manager_notes:notes,renewal_date:status==='noncontracted'?null:renewal,notice_deadline:status==='noncontracted'?null:notice,baseline_review_date:status==='noncontracted'?baseline:null,review_interval_days:status==='noncontracted'?interval:null,next_review_at:nextReview,updated_at:new Date().toISOString()}});if(!saved.length)return res.status(404).json({error:'Vendor not found in this company'});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor update failed'});}
  });
  app.get(`/api/${apiName}/vendors/:id/history`,manager,async(req,res)=>{if(!/^[0-9a-f-]{36}$/i.test(req.params.id))return res.status(400).json({error:'Invalid vendor ID'});try{const history=await palDb('pal_vendor_history',{query:`tenant=eq.${tenant}&vendor_id=eq.${req.params.id}&select=*&order=created_at.desc&limit=250`});res.json({history});}catch(e){res.status(503).json({error:'History unavailable'});}});
 }

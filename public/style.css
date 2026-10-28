@@ -124,3 +124,20 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 
 /* Draft 15: document status and manager-only accounting reference panel */
 .doc-status{display:block;margin-top:5px;font-weight:700;color:#166a60}.doc-trash{margin-left:auto;min-width:40px;min-height:40px;border:1px solid #e4c8c8;border-radius:9px;background:#fff;color:#9c2c2c;cursor:pointer}.doc-trash:hover{background:#fff0f0}.doc-accounting-panel{margin-top:24px;border:1px solid #d9e2eb;border-radius:12px;padding:18px;background:#fff}.doc-accounting-panel summary{font-weight:750;cursor:pointer}.doc-accounting-panel textarea{display:block;width:100%;padding:12px;margin:12px 0;border:1px solid #ccd5e0;border-radius:8px;font:inherit}.doc-accounting-actions{display:flex;gap:10px;flex-wrap:wrap}.coa-results{max-height:280px;overflow:auto}.coa-results>div{padding:7px;border-bottom:1px solid #eee}
+
+/* PAL 20.9 workspace refinements */
+.doc-collection-tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.doc-collection-tabs button{background:#fff!important;color:#175ba5!important;border:1px solid #bfd4ec!important;border-radius:12px!important;padding:13px 20px!important;font-weight:800;box-shadow:0 2px 8px #174d8412}
+.doc-collection-tabs button.selected{background:#176bc5!important;color:#fff!important;border-color:#176bc5!important;box-shadow:0 5px 14px #176bc53b}
+.doc-accounting-panel label{display:block;margin:12px 0;font-weight:650;color:#334155}
+.doc-accounting-panel label input,.doc-accounting-panel label select{margin-left:7px;padding:10px;border:1px solid #cbd5e1;border-radius:9px;max-width:100%}
+.doc-accounting-panel .vendor-contract-fields,.doc-accounting-panel .vendor-review-fields{display:flex;flex-wrap:wrap;gap:14px}
+.doc-accounting-panel [hidden]{display:none!important}
+.doc-accounting-panel .vendor-notes-label{display:block;clear:both;width:100%;margin-top:20px}
+.doc-accounting-panel #vendor-notes{width:100%;min-height:110px;display:block}
+.coa-file-label{padding:12px;background:#f2f7fd;border:1px dashed #aac8eb;border-radius:10px}
+.newstart-tabs{display:flex;grid-template-columns:none;flex-wrap:wrap}
+.newstart-tabs button{min-width:180px;padding:16px 24px}
+.newstart-logo{font-size:100px;font-weight:900;color:#147a8e;line-height:1}
+.newstart-logo span{font-size:25px;vertical-align:top;color:#38b6ac}
+.newstart-title{font-size:clamp(34px,5vw,60px);font-weight:900;color:#145268;letter-spacing:4px}
