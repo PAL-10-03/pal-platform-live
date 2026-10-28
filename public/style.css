@@ -146,3 +146,8 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 .pal-record-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #e3e8ef}
 .pal-delete-record{border:1px solid #d8a5a5;border-radius:7px;background:#fff;color:#a52d2d;padding:7px 12px;cursor:pointer;white-space:nowrap}
 .pal-delete-record:hover{background:#fff0f0}
+
+/* 21.1: keep manager tools exclusive to Permanent Records */
+.doc-accounting-panel[hidden]{display:none!important}
+.doc-accounting-actions button{min-height:44px}
+.coa-results .pal-delete-record{min-width:40px;font-size:19px}

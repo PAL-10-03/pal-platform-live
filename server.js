@@ -128,7 +128,13 @@ app.post('/api/baa/accounting/accounts/import',baaManagerAccess,express.json({li
   if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or repeated account name, number or type'});
   names.add(name.toLowerCase());cleaned.push({tenant:'born-again-air',account_name:name,account_number:number||null,account_type:type||null,is_active:true});
  }
- try{const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
+ try{// Preserve the uploaded source workbook in private tenant-specific Storage.
+   if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
+   const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
+   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
+   if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
+   const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
 });
 // Born Again Air customer Document Center. Uses same private Supabase bucket as owner storage.
 function baaDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('born-again-air'))return res.status(403).json({error:'Born Again Air access required'});next();}
@@ -205,7 +211,13 @@ app.post('/api/newstart/accounting/accounts/import',newstartManagerAccess,expres
   if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or repeated account name, number or type'});
   names.add(name.toLowerCase());cleaned.push({tenant:'newstart',account_name:name,account_number:number||null,account_type:type||null,is_active:true});
  }
- try{const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
+ try{// Preserve the uploaded source workbook in private tenant-specific Storage.
+   if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
+   const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
+   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
+   if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
+   const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
 });
 // Excel-only chart-of-accounts import. No QuickBooks posting or financial actions.
 const ExcelJS = require('exceljs');
@@ -226,8 +238,30 @@ for(const [tenant,apiName,manager] of [['born-again-air','baa',baaManagerAccess]
     if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or duplicate account. Expected columns: Number, Account Name, Account Type'});
     names.add(name.toLowerCase());cleaned.push({tenant,account_name:name,account_number:number||null,account_type:type||null,is_active:true});
    }
-   const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});
+   // Preserve the uploaded source workbook in private tenant-specific Storage.
+   if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
+   const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
+   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
+   if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
+   const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});
   }catch(e){console.error('Excel accounts import',e.message);res.status(400).json({error:'Could not read Excel accounts. Use a standard .xlsx workbook with Number, Account Name, Account Type columns.'});}
+ });
+}
+// Private chart-of-accounts workbooks: manager/PAL owner only, per tenant.
+for(const [apiName,tenant,manager] of [['baa','born-again-air',baaManagerAccess],['newstart','newstart',newstartManagerAccess]]){
+ const prefix=`${tenant}/charts-of-accounts/`;
+ app.get(`/api/${apiName}/accounting/charts`,manager,async(_req,res)=>{
+  if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+  try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const files=(await r.json()).filter(x=>/^\d{13}-[a-f0-9]{12}-chart-of-accounts\.xlsx$/.test(x.name)).map(x=>({name:x.name,created_at:x.created_at,size:x.metadata?.size||0}));res.set('Cache-Control','no-store');res.json({files});}catch(e){console.error('Chart list',e.message);storageError(res);}
+ });
+ app.post(`/api/${apiName}/accounting/charts/link`,manager,express.json({limit:'2kb'}),async(req,res)=>{
+  const name=req.body?.name;if(typeof name!=='string'||!/^\d{13}-[a-f0-9]{12}-chart-of-accounts\.xlsx$/.test(name))return res.status(400).json({error:'Invalid chart'});
+  try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${prefix}${name}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const d=await r.json();res.json({url:new URL(d.signedURL,supaUrl).toString()});}catch(e){storageError(res);}
+ });
+ app.post(`/api/${apiName}/accounting/charts/delete`,manager,express.json({limit:'2kb'}),async(req,res)=>{
+  const name=req.body?.name;if(typeof name!=='string'||!/^\d{13}-[a-f0-9]{12}-chart-of-accounts\.xlsx$/.test(name)||req.body?.confirm!==true)return res.status(400).json({error:'Invalid chart deletion'});
+  try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}`,{method:'DELETE',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefixes:[prefix+name]})});if(!r.ok)return storageError(res);res.json({ok:true,message:'Workbook removed; imported account records remain until separately removed.'});}catch(e){storageError(res);}
  });
 }
 // Newstart customer Document Center. Uses same private Supabase bucket as owner storage.
