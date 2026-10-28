@@ -121,3 +121,6 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 
 /* Document Center: adjacent bulk actions, no changes to shipping/label styling */
 .doc-bulk-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.doc-delete-action{border-color:#b42318!important;color:#b42318!important}.doc-delete-action:hover{background:#fff1f0!important}.doc-delete-action:disabled{opacity:.55;cursor:wait}
+
+/* Draft 15: document status and manager-only accounting reference panel */
+.doc-status{display:block;margin-top:5px;font-weight:700;color:#166a60}.doc-trash{margin-left:auto;min-width:40px;min-height:40px;border:1px solid #e4c8c8;border-radius:9px;background:#fff;color:#9c2c2c;cursor:pointer}.doc-trash:hover{background:#fff0f0}.doc-accounting-panel{margin-top:24px;border:1px solid #d9e2eb;border-radius:12px;padding:18px;background:#fff}.doc-accounting-panel summary{font-weight:750;cursor:pointer}.doc-accounting-panel textarea{display:block;width:100%;padding:12px;margin:12px 0;border:1px solid #ccd5e0;border-radius:8px;font:inherit}.doc-accounting-actions{display:flex;gap:10px;flex-wrap:wrap}.coa-results{max-height:280px;overflow:auto}.coa-results>div{padding:7px;border-bottom:1px solid #eee}

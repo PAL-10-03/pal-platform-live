@@ -94,15 +94,55 @@ app.post('/api/owner/files/:company/link',requireOwner,requireCompany,express.js
     const r=await fetch(url,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});
   }catch(e){console.error('Storage link error',e.message);storageError(res);}
 });
+// Draft 20.6: secondary company PIN gate. Clerk role/tenant checks remain mandatory.
+// Configure PAL_BAA_MANAGER_PIN and PAL_NEWSTART_MANAGER_PIN in Render; no PINs shipped in code.
+const crypto = require('crypto');
+function pinForTenant(tenant){return tenant==='born-again-air'?process.env.PAL_BAA_MANAGER_PIN:process.env.PAL_NEWSTART_MANAGER_PIN;}
+function checkManagerPin(req,res,next){
+ const tenant=req.path.startsWith('/api/baa/')?'born-again-air':req.path.startsWith('/api/newstart/')?'newstart':null;
+ if(!tenant)return next();
+ const protectedPath=/^\/api\/(baa|newstart)\/(permanent(?:\/|$)|vendors(?:\/|$)|accounting(?:\/|$)|reports(?:\/|$)|documents\/move-permanent(?:\/|$))/.test(req.path)
+  || (req.method==='POST' && /^\/api\/(baa|newstart)\/documents$/.test(req.path) && req.query.collection==='permanent');
+ if(!protectedPath)return next();
+ if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});
+ const m=membership(req);
+ if(!m.companies.includes(tenant)||!(isOwner(req)||m.role==='manager'))return res.status(403).json({error:'Manager role required'});
+ const expected=pinForTenant(tenant);
+ if(!expected)return res.status(503).json({error:'Manager PIN not configured on server'});
+ const received=req.get('x-pal-manager-pin')||'';
+ const a=Buffer.from(received),b=Buffer.from(expected);
+ if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return res.status(403).json({error:'Manager PIN required or incorrect',code:'MANAGER_PIN_REQUIRED'});
+ res.set('Cache-Control','no-store');next();
+}
+app.use(checkManagerPin);
+app.get(['/api/baa/reports/access','/api/newstart/reports/access'],(req,res)=>res.json({ok:true}));
+// Draft 15: owner/BAA-manager accounting reference management. No QBO writes.
+const {db: palDb}=require('./automation/core');
+function baaManagerAccess(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('born-again-air'))))return res.status(403).json({error:'Manager access required'});next();}
+app.get('/api/baa/accounting/accounts',baaManagerAccess,async(_req,res)=>{try{const accounts=await palDb('pal_accounting_accounts',{query:'tenant=eq.born-again-air&select=id,account_number,account_name,account_type,qbo_account_id,is_active&order=account_name.asc&limit=1000'});res.set('Cache-Control','no-store');res.json({accounts});}catch(e){console.error('Accounts list',e.message);res.status(503).json({error:'Accounting database unavailable. Check migration 009.'});}});
+app.post('/api/baa/accounting/accounts/import',baaManagerAccess,express.json({limit:'100kb'}),async(req,res)=>{
+ const rows=req.body?.accounts;
+ if(!Array.isArray(rows)||rows.length<1||rows.length>300)return res.status(400).json({error:'Provide 1 to 300 accounts per import'});
+ const cleaned=[];const names=new Set();
+ for(const item of rows){const name=String(item?.account_name||'').trim(),number=String(item?.account_number||'').trim(),type=String(item?.account_type||'').trim();
+  if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or repeated account name, number or type'});
+  names.add(name.toLowerCase());cleaned.push({tenant:'born-again-air',account_name:name,account_number:number||null,account_type:type||null,is_active:true});
+ }
+ try{const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
+});
 // Born Again Air customer Document Center. Uses same private Supabase bucket as owner storage.
 function baaDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('born-again-air'))return res.status(403).json({error:'Born Again Air access required'});next();}
 const baaDocPrefix='born-again-air/documents/';
 function safeDocName(name){return typeof name==='string'&&/^\d{13}-[a-f0-9]{12}-[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}$/.test(name);}
 app.get('/api/baa/documents',baaDocumentAccess,async(_req,res)=>{
  if(!storageReady)return res.json({configured:false,files:[]});
- try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix:baaDocPrefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const data=await r.json();res.json({configured:true,files:(Array.isArray(data)?data:[]).filter(x=>safeDocName(x.name)).map(x=>({name:x.name,displayName:x.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:x.created_at,size:x.metadata?.size||0}))});}catch(e){console.error('BAA documents list',e.message);storageError(res);}
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix:baaDocPrefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const data=await r.json();const files=(Array.isArray(data)?data:[]).filter(x=>safeDocName(x.name)).map(x=>({name:x.name,displayName:x.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:x.created_at,size:x.metadata?.size||0}));
+  const statuses=await palDb('pal_document_status',{query:'tenant=eq.born-again-air&select=storage_path,retention_class,processing_status,verified_at,hold&limit=1000'});
+  const byPath=new Map((statuses||[]).map(s=>[s.storage_path,s]));
+  res.set('Cache-Control','no-store');res.json({configured:true,files:files.map(f=>({...f,status:byPath.get(baaDocPrefix+f.name)||{retention_class:'unclassified',processing_status:'uploaded',hold:false}}))});}catch(e){console.error('BAA documents list',e.message);storageError(res);}
 });
 app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
+ if(req.query.collection==='permanent' && !(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('born-again-air'))))return res.status(403).json({error:'Manager access required for Permanent Records'});
  if(!storageReady)return res.status(503).json({error:'Private Supabase storage must be configured first'});
  let name;try{name=decodeURIComponent(String(req.headers['x-pal-filename']||''));}catch{return res.status(400).json({error:'Invalid filename'});}
  if(!/^[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG, PNG, XLSX, XLS and CSV documents are supported'});
@@ -116,8 +156,15 @@ app.post('/api/baa/documents',baaDocumentAccess,express.raw({type:'application/o
  const isCsv=!csvSample.includes(0)&&!csvSample.some(byte=>byte<9||(byte>13&&byte<32))&&new TextDecoder('utf-8',{fatal:false}).decode(csvSample).includes(',');
  if(!(isPdf&&/\.pdf$/i.test(name)||isPng&&/\.png$/i.test(name)||isJpg&&/\.jpe?g$/i.test(name)||isXlsx&&/\.xlsx$/i.test(name)||isXls&&/\.xls$/i.test(name)||isCsv&&/\.csv$/i.test(name)))return res.status(400).json({error:'File contents do not match the supported document type'});
  const id=require('crypto').randomBytes(6).toString('hex');const stored=`${Date.now()}-${id}-${name}`;
- try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);res.status(201).json({ok:true,name:stored,uploaded_at:new Date().toISOString()});}catch(e){console.error('BAA document upload',e.message);storageError(res);}
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${req.query.collection==='permanent'?'born-again-air/permanent/':baaDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);if(req.query.collection!=='permanent')await palDb('pal_document_status',{method:'POST',query:'on_conflict=tenant,storage_path',prefer:'resolution=merge-duplicates',body:{tenant:'born-again-air',storage_path:baaDocPrefix+stored,retention_class:'unclassified',processing_status:'uploaded',hold:true}});res.status(201).json({ok:true,name:stored,collection:req.query.collection==='permanent'?'permanent':'accounting',uploaded_at:new Date().toISOString()});}catch(e){console.error('BAA document upload',e.message);storageError(res);}
 });
+// Fail-closed manual accounting deletion policy. Missing or ambiguous records are protected.
+function manualDeletionAllowed(paths,statuses){
+ if(!Array.isArray(statuses)||statuses.length!==paths.length)return false;
+ const byPath=new Map();
+ for(const row of statuses){if(!row||!paths.includes(row.storage_path)||byPath.has(row.storage_path))return false;byPath.set(row.storage_path,row);}
+ return paths.every(path=>{const row=byPath.get(path);return row&&row.hold===false&&row.retention_class==='temporary_accounting'&&['uploaded','needs_review'].includes(row.processing_status);});
+}
 // Explicit document deletion: manager or PAL owner only. Never delete unrelated box or price files.
 app.post('/api/baa/documents/delete',baaDocumentAccess,express.json({limit:'50kb'}),async(req,res)=>{
  if(!(isOwner(req)||membership(req).role==='manager'))return res.status(403).json({error:'Manager access required to delete documents'});
@@ -126,11 +173,17 @@ app.post('/api/baa/documents/delete',baaDocumentAccess,express.json({limit:'50kb
  if(!Array.isArray(names)||!names.length||names.length>100||!names.every(safeDocName)||new Set(names).size!==names.length)return res.status(400).json({error:'Select 1 to 100 valid documents'});
  try{
   const paths=names.map(name=>baaDocPrefix+name);
+  const encoded=paths.map(x=>'"'+x.replaceAll('"','')+'"').join(',');
+  const statuses=await palDb('pal_document_status',{query:`tenant=eq.born-again-air&storage_path=in.(${encodeURIComponent(encoded)})&select=storage_path,retention_class,processing_status,hold`});
+  if(!manualDeletionAllowed(paths,statuses))return res.status(409).json({error:'Deletion blocked: each document must have an explicit temporary accounting status, no hold, and no active processing. Missing or permanent records are protected.'});
+  // Record intent before storage mutation so a failed post-delete audit cannot erase history.
+  const audit=await palDb('pal_document_deletion_audit',{method:'POST',prefer:'return=representation',body:paths.map(storage_path=>({tenant:'born-again-air',storage_path,deleted_by:getAuth(req).userId,reason:'manager_manual_delete',outcome:'requested'}))});
   const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}`,{method:'DELETE',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefixes:paths})});
   if(!r.ok){console.error('Document deletion rejected by Supabase',r.status,(await r.text()).slice(0,300));return storageError(res);}
   const result=await r.json();
   const removed=Array.isArray(result)?result:result?.data;
   if(!Array.isArray(removed)||removed.length!==names.length)return res.status(502).json({error:'Deletion result needs verification. Refresh the document list.'});
+  await palDb('pal_document_deletion_audit',{method:'PATCH',query:`id=in.(${audit.map(a=>a.id).join(',')})`,body:{outcome:'confirmed'}});
   console.info('BAA document deletion',JSON.stringify({actor:getAuth(req).userId,count:removed.length,at:new Date().toISOString()}));
   res.json({ok:true,deleted:removed.length});
  }catch(e){console.error('BAA document deletion error',e.message);storageError(res);}
@@ -139,7 +192,140 @@ app.post('/api/baa/documents/link',baaDocumentAccess,express.json({limit:'5kb'})
  const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
  try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${baaDocPrefix}${encodeURIComponent(name)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});}catch(e){console.error('BAA document download',e.message);storageError(res);}
 });
+
+// Draft 16: Newstart uses the same protected document and accounting workflow,
+// isolated by tenant and storage prefix. No QuickBooks Desktop writes.
+function newstartManagerAccess(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('newstart'))))return res.status(403).json({error:'Manager access required'});next();}
+app.get('/api/newstart/accounting/accounts',newstartManagerAccess,async(_req,res)=>{try{const accounts=await palDb('pal_accounting_accounts',{query:'tenant=eq.newstart&select=id,account_number,account_name,account_type,qbo_account_id,is_active&order=account_name.asc&limit=1000'});res.set('Cache-Control','no-store');res.json({accounts});}catch(e){console.error('Accounts list',e.message);res.status(503).json({error:'Accounting database unavailable. Check migration 009.'});}});
+app.post('/api/newstart/accounting/accounts/import',newstartManagerAccess,express.json({limit:'100kb'}),async(req,res)=>{
+ const rows=req.body?.accounts;
+ if(!Array.isArray(rows)||rows.length<1||rows.length>300)return res.status(400).json({error:'Provide 1 to 300 accounts per import'});
+ const cleaned=[];const names=new Set();
+ for(const item of rows){const name=String(item?.account_name||'').trim(),number=String(item?.account_number||'').trim(),type=String(item?.account_type||'').trim();
+  if(!name||name.length>180||number.length>60||type.length>100||names.has(name.toLowerCase()))return res.status(400).json({error:'Invalid or repeated account name, number or type'});
+  names.add(name.toLowerCase());cleaned.push({tenant:'newstart',account_name:name,account_number:number||null,account_type:type||null,is_active:true});
+ }
+ try{const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
+});
+// Newstart customer Document Center. Uses same private Supabase bucket as owner storage.
+function newstartDocumentAccess(req,res,next){if(!isSignedIn(req)||!membership(req).companies.includes('newstart'))return res.status(403).json({error:'Newstart access required'});next();}
+const newstartDocPrefix='newstart/documents/';
+
+app.get('/api/newstart/documents',newstartDocumentAccess,async(_req,res)=>{
+ if(!storageReady)return res.json({configured:false,files:[]});
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix:newstartDocPrefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});if(!r.ok)return storageError(res);const data=await r.json();const files=(Array.isArray(data)?data:[]).filter(x=>safeDocName(x.name)).map(x=>({name:x.name,displayName:x.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:x.created_at,size:x.metadata?.size||0}));
+  const statuses=await palDb('pal_document_status',{query:'tenant=eq.newstart&select=storage_path,retention_class,processing_status,verified_at,hold&limit=1000'});
+  const byPath=new Map((statuses||[]).map(s=>[s.storage_path,s]));
+  res.set('Cache-Control','no-store');res.json({configured:true,files:files.map(f=>({...f,status:byPath.get(newstartDocPrefix+f.name)||{retention_class:'unclassified',processing_status:'uploaded',hold:false}}))});}catch(e){console.error('Newstart documents list',e.message);storageError(res);}
+});
+app.post('/api/newstart/documents',newstartDocumentAccess,express.raw({type:'application/octet-stream',limit:'12mb'}),async(req,res)=>{
+ if(req.query.collection==='permanent' && !(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('newstart'))))return res.status(403).json({error:'Manager access required for Permanent Records'});
+ if(!storageReady)return res.status(503).json({error:'Private Supabase storage must be configured first'});
+ let name;try{name=decodeURIComponent(String(req.headers['x-pal-filename']||''));}catch{return res.status(400).json({error:'Invalid filename'});}
+ if(!/^[a-zA-Z0-9][a-zA-Z0-9._ ()-]{0,119}\.(pdf|png|jpe?g|xlsx|xls|csv)$/i.test(name))return res.status(400).json({error:'Only PDF, JPG, PNG, XLSX, XLS and CSV documents are supported'});
+ if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:'Empty document'});
+ const isPdf=req.body.subarray(0,5).toString()==='%PDF-';const isPng=req.body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));const isJpg=req.body.subarray(0,3).equals(Buffer.from([255,216,255]));
+ // XLSX is ZIP-based (PK); legacy XLS uses the OLE compound-file signature.
+ // CSV must be plain text, not a renamed executable or binary file.
+ const isXlsx=req.body.subarray(0,4).equals(Buffer.from([80,75,3,4]));
+ const isXls=req.body.subarray(0,8).equals(Buffer.from([208,207,17,224,161,177,26,225]));
+ const csvSample=req.body.subarray(0,Math.min(req.body.length,65536));
+ const isCsv=!csvSample.includes(0)&&!csvSample.some(byte=>byte<9||(byte>13&&byte<32))&&new TextDecoder('utf-8',{fatal:false}).decode(csvSample).includes(',');
+ if(!(isPdf&&/\.pdf$/i.test(name)||isPng&&/\.png$/i.test(name)||isJpg&&/\.jpe?g$/i.test(name)||isXlsx&&/\.xlsx$/i.test(name)||isXls&&/\.xls$/i.test(name)||isCsv&&/\.csv$/i.test(name)))return res.status(400).json({error:'File contents do not match the supported document type'});
+ const id=require('crypto').randomBytes(6).toString('hex');const stored=`${Date.now()}-${id}-${name}`;
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${req.query.collection==='permanent'?'newstart/permanent/':newstartDocPrefix}${encodeURIComponent(stored)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/octet-stream','x-upsert':'false'}),body:req.body});if(!r.ok)return storageError(res);if(req.query.collection!=='permanent')await palDb('pal_document_status',{method:'POST',query:'on_conflict=tenant,storage_path',prefer:'resolution=merge-duplicates',body:{tenant:'newstart',storage_path:newstartDocPrefix+stored,retention_class:'unclassified',processing_status:'uploaded',hold:true}});res.status(201).json({ok:true,name:stored,collection:req.query.collection==='permanent'?'permanent':'accounting',uploaded_at:new Date().toISOString()});}catch(e){console.error('Newstart document upload',e.message);storageError(res);}
+});
+// Explicit document deletion: manager or PAL owner only. Never delete unrelated box or price files.
+app.post('/api/newstart/documents/delete',newstartDocumentAccess,express.json({limit:'50kb'}),async(req,res)=>{
+ if(!(isOwner(req)||membership(req).role==='manager'))return res.status(403).json({error:'Manager access required to delete documents'});
+ if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+ const names=req.body?.names;
+ if(!Array.isArray(names)||!names.length||names.length>100||!names.every(safeDocName)||new Set(names).size!==names.length)return res.status(400).json({error:'Select 1 to 100 valid documents'});
+ try{
+  const paths=names.map(name=>newstartDocPrefix+name);
+  const encoded=paths.map(x=>'"'+x.replaceAll('"','')+'"').join(',');
+  const statuses=await palDb('pal_document_status',{query:`tenant=eq.newstart&storage_path=in.(${encodeURIComponent(encoded)})&select=storage_path,retention_class,processing_status,hold`});
+  if(!manualDeletionAllowed(paths,statuses))return res.status(409).json({error:'Deletion blocked: each document must have an explicit temporary accounting status, no hold, and no active processing. Missing or permanent records are protected.'});
+  // Record intent before storage mutation so a failed post-delete audit cannot erase history.
+  const audit=await palDb('pal_document_deletion_audit',{method:'POST',prefer:'return=representation',body:paths.map(storage_path=>({tenant:'newstart',storage_path,deleted_by:getAuth(req).userId,reason:'manager_manual_delete',outcome:'requested'}))});
+  const r=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}`,{method:'DELETE',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefixes:paths})});
+  if(!r.ok){console.error('Document deletion rejected by Supabase',r.status,(await r.text()).slice(0,300));return storageError(res);}
+  const result=await r.json();
+  const removed=Array.isArray(result)?result:result?.data;
+  if(!Array.isArray(removed)||removed.length!==names.length)return res.status(502).json({error:'Deletion result needs verification. Refresh the document list.'});
+  await palDb('pal_document_deletion_audit',{method:'PATCH',query:`id=in.(${audit.map(a=>a.id).join(',')})`,body:{outcome:'confirmed'}});
+  console.info('Newstart document deletion',JSON.stringify({actor:getAuth(req).userId,count:removed.length,at:new Date().toISOString()}));
+  res.json({ok:true,deleted:removed.length});
+ }catch(e){console.error('Newstart document deletion error',e.message);storageError(res);}
+});
+app.post('/api/newstart/documents/link',newstartDocumentAccess,express.json({limit:'5kb'}),async(req,res)=>{
+ const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+ try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${newstartDocPrefix}${encodeURIComponent(name)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();if(!data.signedURL)return storageError(res);res.json({url:new URL(data.signedURL,supaUrl).toString()});}catch(e){console.error('Newstart document download',e.message);storageError(res);}
+});
+
 require('./baa-api')(app,{manager:req=>membership(req).companies.includes('born-again-air')&&(isOwner(req)||membership(req).role==='manager'),user:req=>getAuth(req).userId});
+require('./automation/routes')(app,requireOwner);
 app.use(express.json({limit:'100kb'}));
+// Draft 17: permanent records have a separate storage prefix, never enter the accounting cleanup scanner.
+for (const [tenant,apiName] of [['born-again-air','baa'],['newstart','newstart']]) {
+ const access=apiName==='baa'?baaDocumentAccess:newstartDocumentAccess;
+ const manager=apiName==='baa'?baaManagerAccess:newstartManagerAccess;
+ const prefix=`${tenant}/permanent/`;
+ app.get(`/api/${apiName}/permanent`,access,async(req,res)=>{
+  if(!storageReady)return res.json({configured:false,files:[]});
+  try {const r=await fetch(`${supaUrl}/storage/v1/object/list/${encodeURIComponent(bucket)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({prefix,limit:1000,sortBy:{column:'created_at',order:'desc'}})});
+   if(!r.ok)return storageError(res);const files=(await r.json()).filter(f=>safeDocName(f.name)).map(f=>({name:f.name,displayName:f.name.replace(/^\d{13}-[a-f0-9]{12}-/,''),created_at:f.created_at,size:f.metadata?.size||0,status:{retention_class:'permanent',processing_status:'permanent',hold:true}}));res.set('Cache-Control','no-store');res.json({configured:true,files});
+  }catch(e){console.error('Permanent list',e.message);storageError(res);}
+ });
+ app.post(`/api/${apiName}/permanent/link`,access,express.json({limit:'5kb'}),async(req,res)=>{
+  const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+  try{const r=await fetch(`${supaUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${prefix}${encodeURIComponent(name)}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({expiresIn:60})});if(!r.ok)return storageError(res);const data=await r.json();res.json({url:new URL(data.signedURL,supaUrl).toString()});}catch(e){console.error('Permanent link',e.message);storageError(res);}
+ });
+ // Human-only removal: archive a recoverable copy first; bots have no access to this route.
+ app.post(`/api/${apiName}/permanent/delete`,manager,express.json({limit:'5kb'}),async(req,res)=>{
+  const name=req.body?.name;
+  if(!safeDocName(name)||req.body?.confirm!==true)return res.status(400).json({error:'Select a valid file and explicitly confirm removal'});
+  if(!storageReady)return res.status(503).json({error:'Storage unavailable'});
+  const source=`${prefix}${name}`;
+  const archive=`${tenant}/permanent-archive/${Date.now()}-${require('crypto').randomBytes(6).toString('hex')}-${name}`;
+  try {
+   const copy=await fetch(`${supaUrl}/storage/v1/object/copy`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({bucketId:bucket,sourceKey:source,destinationKey:archive})});
+   if(!copy.ok)return res.status(502).json({error:'Removal blocked: recovery copy could not be saved'});
+   const del=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${source.split('/').map(encodeURIComponent).join('/')}`,{method:'DELETE',headers:storageHeaders()});
+   if(!del.ok)return res.status(502).json({error:'Recovery copy saved, but active record could not be removed'});
+   console.info('Permanent record manually archived',JSON.stringify({tenant,name,archive,actor:getAuth(req).userId}));
+   res.json({ok:true,message:'Removed from Permanent Records. A recovery copy was retained in the private archive.'});
+  }catch(e){console.error('Permanent removal failed',e.message);res.status(503).json({error:'Removal failed; check active and archived files before retrying'});}
+ });
+ // Moving requires manager confirmation and storage copy before deletion. No auto move.
+ app.post(`/api/${apiName}/documents/move-permanent`,manager,express.json({limit:'5kb'}),async(req,res)=>{
+  const name=req.body?.name;if(!safeDocName(name))return res.status(400).json({error:'Invalid document'});
+  const source=`${tenant}/documents/${name}`,target=`${tenant}/permanent/${name}`;
+  try{const r=await fetch(`${supaUrl}/storage/v1/object/copy`,{method:'POST',headers:storageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({bucketId:bucket,sourceKey:source,destinationKey:target})});if(!r.ok)return res.status(502).json({error:'Could not copy document; original was retained'});
+   // Do not remove source automatically: avoids losing Reader/QuickBooks references. Explicitly disclose duplicate.
+   await palDb('pal_document_status',{method:'POST',query:'on_conflict=tenant,storage_path',prefer:'resolution=merge-duplicates',body:{tenant,storage_path:source,retention_class:'permanent',processing_status:'needs_review',hold:true}});
+   res.json({ok:true,message:'Protected copy saved in Permanent Records. Original accounting upload retained on hold for review.'});
+  }catch(e){console.error('Move permanent',e.message);res.status(503).json({error:'Copy or protection failed; verify both locations before proceeding'});}
+ });
+ app.get(`/api/${apiName}/vendors`,manager,async(req,res)=>{try{const vendors=await palDb('pal_vendors',{query:`tenant=eq.${tenant}&select=*&order=name.asc&limit=1000`});res.set('Cache-Control','no-store');res.json({vendors});}catch(e){res.status(503).json({error:'Vendor database unavailable. Apply migration 011.'});}});
+ app.post(`/api/${apiName}/vendors`,manager,express.json({limit:'15kb'}),async(req,res)=>{
+  const v=req.body||{};const name=String(v.name||'').trim(),status=String(v.contract_status||'unknown'),notes=String(v.manager_notes||'').trim();
+  if(!name||name.length>180||!['contracted','noncontracted','unknown','expired'].includes(status)||notes.length>6000)return res.status(400).json({error:'Invalid vendor details'});
+  const date=x=>!x?null:/^\d{4}-\d{2}-\d{2}$/.test(x)?x:false;
+  const renewal=date(v.renewal_date),notice=date(v.notice_deadline);if(renewal===false||notice===false)return res.status(400).json({error:'Dates must use YYYY-MM-DD'});
+  try{const saved=await palDb('pal_vendors',{method:'POST',query:'on_conflict=tenant,name',prefer:'resolution=merge-duplicates,return=representation',body:{tenant,name,contract_status:status,manager_notes:notes,renewal_date:renewal,notice_deadline:notice,updated_at:new Date().toISOString()}});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor save failed'});}
+ });
+ app.patch(`/api/${apiName}/vendors/:id`,manager,express.json({limit:'15kb'}),async(req,res)=>{
+  const id=req.params.id;if(!/^[0-9a-f-]{36}$/i.test(id))return res.status(400).json({error:'Invalid vendor ID'});
+  const v=req.body||{},status=String(v.contract_status||'unknown'),notes=String(v.manager_notes||'').trim();
+  if(!['contracted','noncontracted','unknown','expired'].includes(status)||notes.length>6000)return res.status(400).json({error:'Invalid vendor details'});
+  const date=x=>!x?null:/^\d{4}-\d{2}-\d{2}$/.test(x)?x:false;
+  const renewal=date(v.renewal_date),notice=date(v.notice_deadline);if(renewal===false||notice===false)return res.status(400).json({error:'Invalid date'});
+  try{const saved=await palDb('pal_vendors',{method:'PATCH',query:`tenant=eq.${tenant}&id=eq.${id}`,prefer:'return=representation',body:{contract_status:status,manager_notes:notes,renewal_date:renewal,notice_deadline:notice,updated_at:new Date().toISOString()}});if(!saved.length)return res.status(404).json({error:'Vendor not found in this company'});res.json({vendor:saved[0]});}catch(e){res.status(503).json({error:'Vendor update failed'});}
+ });
+ app.get(`/api/${apiName}/vendors/:id/history`,manager,async(req,res)=>{if(!/^[0-9a-f-]{36}$/i.test(req.params.id))return res.status(400).json({error:'Invalid vendor ID'});try{const history=await palDb('pal_vendor_history',{query:`tenant=eq.${tenant}&vendor_id=eq.${req.params.id}&select=*&order=created_at.desc&limit=250`});res.json({history});}catch(e){res.status(503).json({error:'History unavailable'});}});
+}
+
+// Register the terminal 404 handler only after all company routes.
 app.use((_req,res)=>res.status(404).send('Page not found'));
 app.listen(PORT,()=>console.log(`PAL listening on ${PORT}`));
