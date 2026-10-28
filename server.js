@@ -355,6 +355,26 @@ for (const [tenant,apiName] of [['born-again-air','baa'],['newstart','newstart']
  app.get(`/api/${apiName}/vendors/:id/history`,manager,async(req,res)=>{if(!/^[0-9a-f-]{36}$/i.test(req.params.id))return res.status(400).json({error:'Invalid vendor ID'});try{const history=await palDb('pal_vendor_history',{query:`tenant=eq.${tenant}&vendor_id=eq.${req.params.id}&select=*&order=created_at.desc&limit=250`});res.json({history});}catch(e){res.status(503).json({error:'History unavailable'});}});
 }
 
+
+// Manager-controlled record removal. Accounts are deactivated to preserve references.
+for(const [apiName,tenant,manager] of [['baa','born-again-air',baaManagerAccess],['newstart','newstart',newstartManagerAccess]]){
+ app.delete(`/api/${apiName}/accounting/accounts/:id`,manager,async(req,res)=>{
+  const id=req.params.id;if(!/^[0-9a-f-]{36}$/i.test(id))return res.status(400).json({error:'Invalid account ID'});
+  try{const rows=await palDb('pal_accounting_accounts',{method:'PATCH',query:`tenant=eq.${tenant}&id=eq.${id}`,prefer:'return=representation',body:{is_active:false}});if(!rows.length)return res.status(404).json({error:'Account not found'});res.json({ok:true});}
+  catch(e){console.error('Account remove',e.message);res.status(503).json({error:'Account could not be removed'});}
+ });
+ app.delete(`/api/${apiName}/vendors/:id`,manager,async(req,res)=>{
+  const id=req.params.id;if(!/^[0-9a-f-]{36}$/i.test(id))return res.status(400).json({error:'Invalid vendor ID'});
+  try{
+   const history=await palDb('pal_vendor_history',{query:`tenant=eq.${tenant}&vendor_id=eq.${id}&select=id&limit=1`});
+   if(history.length)return res.status(409).json({error:'Vendor has negotiation history and cannot be deleted. Keep it for the audit trail.'});
+   const rows=await palDb('pal_vendors',{method:'DELETE',query:`tenant=eq.${tenant}&id=eq.${id}`,prefer:'return=representation'});
+   if(!rows.length)return res.status(404).json({error:'Vendor not found'});
+   res.json({ok:true});
+  }catch(e){console.error('Vendor remove',e.message);res.status(503).json({error:'Vendor could not be removed'});}
+ });
+}
+
 // Register the terminal 404 handler only after all company routes.
 app.use((_req,res)=>res.status(404).send('Page not found'));
 app.listen(PORT,()=>console.log(`PAL listening on ${PORT}`));
