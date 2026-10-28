@@ -151,3 +151,7 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 .doc-accounting-panel[hidden]{display:none!important}
 .doc-accounting-actions button{min-height:44px}
 .coa-results .pal-delete-record{min-width:40px;font-size:19px}
+
+/* 21.2: Show Newstart original logo below all workspace sections. */
+.newstart-persistent-logo{display:flex;justify-content:center;align-items:center;padding:28px 12px 12px;clear:both}
+.newstart-persistent-logo .newstart-brand-image{width:min(520px,90%);max-width:100%;height:auto;margin:0;object-fit:contain}
