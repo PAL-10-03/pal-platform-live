@@ -47,19 +47,6 @@ app.get('/company/:company',(req,res)=>{
   return res.send(html(req,company==='born-again-air'?'baa':'newstart','Company Workspace'));
 });
 app.get(['/app','/portal'],(req,res)=>{if(!isSignedIn(req))return res.redirect('/login?next=app');if(isOwner(req))return res.redirect('/owner');const member=membership(req);if(member.role==='manager'&&member.companies.includes('born-again-air'))return res.redirect('/company/born-again-air');res.set('Cache-Control','no-store');res.send(html(req,'customer','Workspace'));});
-// Temporary owner-access diagnostic. Remove after troubleshooting.
-app.get('/api/owner-diagnostic', (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  const userId = getAuth(req).userId || '';
-  const configuredId = process.env.PAL_OWNER_CLERK_USER_ID || '';
-  res.json({
-    signedIn: Boolean(userId),
-    ownerVariablePresent: Boolean(configuredId),
-    ownerVariableHasOuterWhitespace: configuredId !== configuredId.trim(),
-    ownerIdMatchesSession: Boolean(userId && configuredId && userId === configuredId),
-    recognizedRole: membership(req).role
-  });
-});
 app.get('/api/me',(req,res)=>{if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});res.set('Cache-Control','no-store');res.json({userId:getAuth(req).userId,...membership(req)});});
 // Optional private Supabase Storage documents. Service key stays SERVER SIDE.
 const supaUrl=(process.env.SUPABASE_URL||'').replace(/\/$/,'');
@@ -115,7 +102,12 @@ function checkManagerPin(req,res,next){
  res.set('Cache-Control','no-store');next();
 }
 app.use(checkManagerPin);
-app.get(['/api/baa/reports/access','/api/newstart/reports/access'],(req,res)=>res.json({ok:true}));
+app.get(['/api/baa/reports/access','/api/newstart/reports/access'],(req,res)=>{
+ const tenant=req.path.startsWith('/api/baa/')?'born-again-air':'newstart';
+ if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});
+ if(!membership(req).companies.includes(tenant))return res.status(403).json({error:'No access to this company'});
+ res.set('Cache-Control','no-store');res.json({ok:true});
+});
 // Draft 15: owner/BAA-manager accounting reference management. No QBO writes.
 const {db: palDb}=require('./automation/core');
 function baaManagerAccess(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('born-again-air'))))return res.status(403).json({error:'Manager access required'});next();}
@@ -131,7 +123,7 @@ app.post('/api/baa/accounting/accounts/import',baaManagerAccess,express.json({li
  try{// Preserve the uploaded source workbook in private tenant-specific Storage.
    if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
    const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
-   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const path=`born-again-air/charts-of-accounts/${fileName}`;
    const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
    if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
    const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
@@ -214,7 +206,7 @@ app.post('/api/newstart/accounting/accounts/import',newstartManagerAccess,expres
  try{// Preserve the uploaded source workbook in private tenant-specific Storage.
    if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
    const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
-   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const path=`born-again-air/charts-of-accounts/${fileName}`;
    const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
    if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
    const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});}catch(e){console.error('Accounts import',e.message);res.status(503).json({error:'Import failed. Existing accounts were not deliberately removed.'});}
@@ -241,7 +233,7 @@ for(const [tenant,apiName,manager] of [['born-again-air','baa',baaManagerAccess]
    // Preserve the uploaded source workbook in private tenant-specific Storage.
    if(!storageReady)return res.status(503).json({error:'Private Storage is not configured; chart was not imported'});
    const fileName=`${Date.now()}-${crypto.randomBytes(6).toString('hex')}-chart-of-accounts.xlsx`;
-   const path=`${tenant}/charts-of-accounts/${fileName}`;
+   const path=`born-again-air/charts-of-accounts/${fileName}`;
    const upload=await fetch(`${supaUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path}`,{method:'POST',headers:storageHeaders({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'false'}),body:req.body});
    if(!upload.ok)return res.status(503).json({error:'Unable to save original chart in private Storage; accounts were not imported'});
    const saved=await palDb('pal_accounting_accounts',{method:'POST',query:'on_conflict=tenant,account_name',prefer:'resolution=merge-duplicates,return=representation',body:cleaned});res.json({ok:true,imported:saved?.length||0,fileName});

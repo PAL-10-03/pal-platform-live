@@ -1,7 +1,7 @@
 'use strict';
 // Server-side xAI API. No tools, financial writes or outbound messages in Phase 2.
 const {instructions}=require('./baa-instructions');
-const ALIASES=Object.freeze({banker:'reconciler',report:'reporter'});
+const ALIASES=Object.freeze({report:'reporter'});
 async function ask(role,content){
  const actual=ALIASES[role]||role;
  if(!Object.hasOwn(instructions,actual))throw Error('Unknown BAA role');

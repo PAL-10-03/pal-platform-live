@@ -1,6 +1,6 @@
 'use strict';
 const crypto=require('node:crypto');
-const ROLES=Object.freeze(['ceo','reader','bookkeeper','reconciler','sales','negotiator','reporter']);
+const ROLES=Object.freeze(['ceo','reader','bookkeeper','banker','sales','negotiator','reporter']);
 const supa=(process.env.SUPABASE_URL||'').replace(/\/$/,'');
 const key=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY||'';
 const configured=()=>Boolean(supa&&key);
