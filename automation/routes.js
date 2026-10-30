@@ -3,6 +3,13 @@ const express=require('express');const a=require('./core');const worker=require(
 module.exports=function(app,requireOwner){
  const router=express.Router();router.use(requireOwner);router.use(express.json({limit:'8kb'}));
  router.get('/status',async(req,res)=>{try{const tenant=req.query.tenant||'born-again-air';if(!['born-again-air','newstart'].includes(tenant))return res.status(400).json({error:'Invalid tenant'});res.set('Cache-Control','no-store');const [setting,jobs]=await Promise.all([a.setting(tenant),a.listJobs(tenant)]);const summary={};for(const j of jobs||[])summary[j.status]=(summary[j.status]||0)+1;res.json({tenant,enabled:setting.enabled,xaiConfigured:Boolean(process.env.XAI_API_KEY),databaseConfigured:a.configured(),roles:a.ROLES,jobs,visibleJobSummary:summary,readerExecutionEnabled:process.env.PAL_READER_EXECUTION==='true'});}catch(e){console.error('Automation status:',e.message);res.status(503).json({error:'Automation database unavailable; apply SQL setup and verify environment configuration.'});}});
+ // Owner-only, opt-in connectivity test. Does not touch customer data or run automation.
+ router.post('/xai-test',async(req,res)=>{try{
+  if(req.body?.tenant!=='born-again-air')return res.status(400).json({error:'Only Born Again Air connectivity test is supported'});
+  const xai=require('./xai');
+  const reply=await xai.ask('reader','Connection test only. Reply with the exact word READY. No document is provided and no actions are requested.');
+  res.set('Cache-Control','no-store');res.json({ok:true,connected:true,model:process.env.PAL_XAI_MODEL||'grok-4',reply:String(reply).slice(0,120)});
+ }catch(e){console.error('xAI connection test:',e.message);res.status(503).json({ok:false,error:'xAI connection test failed',detail:String(e.message).slice(0,100)});}});
  router.post('/enabled',async(req,res)=>{try{const tenant=req.body?.tenant;const enabled=req.body?.enabled;if(!['born-again-air','newstart'].includes(tenant)||typeof enabled!=='boolean')return res.status(400).json({error:'Invalid request'});await a.setEnabled(tenant,enabled);await a.event(tenant,null,enabled?'automation_enabled':'automation_paused');res.json({ok:true,tenant,enabled});}catch(e){console.error('Automation toggle:',e.message);res.status(503).json({error:'Could not update automation setting'});}});
  app.use('/api/owner/automation',router);
  // Scheduler is separate from owner session. Strict secret and no financial writes.
