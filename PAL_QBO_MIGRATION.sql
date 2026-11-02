@@ -27,3 +27,17 @@ alter table public.pal_qbo_connections add column if not exists encrypted_realm_
 -- Existing installs created realm_id NOT NULL; remove that legacy constraint so
 -- newly authorized connections can store only encrypted_realm_id.
 alter table public.pal_qbo_connections alter column realm_id drop not null;
+
+-- Restricted, minimal Intuit API diagnostics. No tokens or QuickBooks content.
+create table if not exists public.pal_qbo_error_logs (
+ id bigint generated always as identity primary key,
+ tenant text not null check (tenant = 'born-again-air'),
+ category text not null check (category in ('oauth_token','oauth_callback','oauth_revoke','api_query','api_validation','api_syntax','network')),
+ http_status integer check (http_status between 100 and 599),
+ intuit_tid text check (intuit_tid ~ '^[a-zA-Z0-9_-]{1,128}$'),
+ created_at timestamptz not null default now()
+);
+alter table public.pal_qbo_error_logs enable row level security;
+revoke all on public.pal_qbo_error_logs from anon, authenticated;
+create index if not exists pal_qbo_error_logs_created_at_idx on public.pal_qbo_error_logs (created_at desc);
+-- Remove older diagnostics after 90 days with an operator-scheduled maintenance task.

@@ -26,6 +26,23 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
   if (fetchSite && !['same-origin','same-site'].includes(fetchSite)) return res.status(403).send('Cross-site request rejected');
   next();
  }
+ // Diagnostic records contain only fixed categories, HTTP status, Intuit TID, and time.
+ // Never store request/response bodies, OAuth parameters, tokens, vendor names, or company data.
+ const safeTid = value => typeof value==='string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value) ? value : null;
+ const safeStatus = value => Number.isInteger(value) && value>=100 && value<=599 ? value : null;
+ const safeCategory = value => ['oauth_token','oauth_callback','oauth_revoke','api_query','api_validation','api_syntax','network'].includes(value) ? value : 'network';
+ async function recordError(category,status,tid){
+  const entry={tenant:TENANT,category:safeCategory(category),http_status:safeStatus(status),intuit_tid:safeTid(tid)};
+  try {await db('pal_qbo_error_logs',{method:'POST',body:entry});}
+  catch (_) {console.error('PAL QBO diagnostic persistence unavailable',entry.category,entry.http_status,entry.intuit_tid||'no-tid');}
+ }
+ const tidOf = r => safeTid(r.headers?.get?.('intuit_tid'));
+ function classifyApiFailure(status){
+  if(status===400)return 'api_validation';
+  if(status===422)return 'api_validation';
+  if(status===404)return 'api_syntax';
+  return 'api_query';
+ }
  const headers = {apikey:supaKey, Authorization:`Bearer ${supaKey}`,'Content-Type':'application/json'};
  const auth = 'Basic '+Buffer.from(`${clientId}:${secret}`).toString('base64');
  function authorized(req,res,next) {
@@ -44,9 +61,40 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
  }
  function encrypt(obj){const iv=crypto.randomBytes(12);const cipher=crypto.createCipheriv('aes-256-gcm',key,iv);const data=Buffer.concat([cipher.update(JSON.stringify(obj),'utf8'),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),data]).toString('base64');}
  function decrypt(s){const b=Buffer.from(s,'base64');const dec=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));dec.setAuthTag(b.subarray(12,28));return JSON.parse(Buffer.concat([dec.update(b.subarray(28)),dec.final()]).toString('utf8'));}
- async function tokenRequest(params){const r=await fetch(TOKEN_URL,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:new URLSearchParams(params)});if(!r.ok)throw new Error(`Intuit token exchange failed (${r.status})`);return r.json();}
+ // Retry only transient network failures, 429, and 5xx; never retry invalid_grant or other 4xx.
+ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ async function resilientFetch(url,options,attempts=3){
+  for(let i=0;i<attempts;i++){
+   try{
+    const r=await fetch(url,options);
+    if((r.status===429||r.status>=500) && i<attempts-1){await sleep(Math.min(1500,250*2**i));continue;}
+    return r;
+   }catch(e){if(i===attempts-1)throw e;await sleep(Math.min(1500,250*2**i));}
+  }
+ }
+ class ReconnectRequired extends Error {constructor(){super('QuickBooks authorization expired; reconnect required');this.name='ReconnectRequired';}}
+ async function tokenRequest(params){
+  const r=await resilientFetch(TOKEN_URL,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:new URLSearchParams(params)});
+  if(!r.ok){
+   await recordError('oauth_token',r.status,tidOf(r));
+   const data=await r.json().catch(()=>({}));
+   if(r.status===400 && (data.error==='invalid_grant'||data.error==='invalid_token'))throw new ReconnectRequired();
+   throw new Error(`Intuit token request failed (${r.status})`);
+  }
+  return r.json();
+ }
+ function tokenExpires(tokens){return Number(tokens.access_expires_at||0)<Date.now()+120000;}
+ async function refreshIfNeeded(c,tokens,force=false){
+  if(!force&&!tokenExpires(tokens))return tokens;
+  if(tokens.refresh_expires_at && Date.now()>=tokens.refresh_expires_at)throw new ReconnectRequired();
+  const next=await tokenRequest({grant_type:'refresh_token',refresh_token:tokens.refresh_token});
+  if(!next.access_token||!next.refresh_token)throw new ReconnectRequired();
+  const updated={access_token:next.access_token,refresh_token:next.refresh_token,access_expires_at:Date.now()+Number(next.expires_in||3600)*1000,refresh_expires_at:Date.now()+Number(next.x_refresh_token_expires_in||86400)*1000};
+  await db('pal_qbo_connections',{method:'PATCH',query:`tenant=eq.${TENANT}`,body:{encrypted_tokens:encrypt(updated),updated_at:new Date().toISOString()}});
+  return updated;
+ }
  async function connection(){const rows=await db('pal_qbo_connections',{query:`tenant=eq.${TENANT}&select=tenant,encrypted_realm_id,encrypted_tokens,updated_at&limit=1`});const row=rows[0];return row?{...row,realm_id:decrypt(row.encrypted_realm_id).realm_id}:null;}
- function error(res,e){console.error('PAL QBO:',e.message);return res.status(503).send(page('QuickBooks unavailable','<p>QuickBooks connection is not ready. No accounting changes were made. Contact PAL support.</p>'));}
+ function error(res,e){console.error('PAL QBO request failed');return res.status(503).send(page('QuickBooks unavailable','<p>QuickBooks connection is not ready. No accounting changes were made. Contact PAL support.</p>'));}
  app.get('/quickbooks/connect',authorized,async(req,res)=>{
   try {const c=ready()?await connection():null;res.send(page('Connect QuickBooks',`<p>Connect Born Again Air’s QuickBooks Online company to PAL. Only an authorized company manager may approve access.</p>${c?`<p><strong>Connected QuickBooks company:</strong> ${esc(c.realm_id)}</p><p>Reconnect only to the same company.</p>`:''}${ready()?'<form method="post" action="/quickbooks/connect/start"><button type="submit">Connect or reconnect QuickBooks</button></form>':'<p><strong>Connection is not enabled yet.</strong> PAL must configure Intuit credentials and encrypted storage first.</p>'}<p>PAL will use read-only accounting API requests during initial testing. No bills, payments, or expenses will be created.</p>`));}
   catch(e){error(res,e)}
@@ -87,10 +135,10 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
    if(!tokens.access_token||!tokens.refresh_token)throw new Error('Incomplete token response');
    await db('pal_qbo_connections',{method:'POST',query:'on_conflict=tenant',prefer:'resolution=merge-duplicates',body:{tenant:TENANT,encrypted_realm_id:encrypt({realm_id:realmId}),encrypted_tokens:encrypt({access_token:tokens.access_token,refresh_token:tokens.refresh_token,access_expires_at:Date.now()+tokens.expires_in*1000,refresh_expires_at:Date.now()+(tokens.x_refresh_token_expires_in||0)*1000}),updated_at:new Date().toISOString()}});
    done('connected');
-  }catch(e){console.error('PAL QBO callback:',e.message);done('unavailable')}
+  }catch(e){if(e instanceof ReconnectRequired)return done('reconnect');console.error('PAL QBO callback failed');done('unavailable')}
  });
  app.get('/quickbooks/result',authorized,(req,res)=>{
-  const messages={connected:'Born Again Air QuickBooks is connected. No accounting transactions were modified.',cancelled:'QuickBooks authorization was cancelled.',expired:'Authorization expired or was already used. Start again from PAL.',invalid:'Invalid authorization response. Start again from PAL.',unauthorized:'Sign in as the same authorized BAA manager and start again.', 'wrong-company':'This PAL workspace is already linked to a different QuickBooks company. Contact PAL support.',unavailable:'QuickBooks connection is temporarily unavailable.'};
+  const messages={connected:'Born Again Air QuickBooks is connected. No accounting transactions were modified.',reconnect:'QuickBooks authorization expired. An authorized BAA manager must reconnect QuickBooks.',cancelled:'QuickBooks authorization was cancelled.',expired:'Authorization expired or was already used. Start again from PAL.',invalid:'Invalid authorization response. Start again from PAL.',unauthorized:'Sign in as the same authorized BAA manager and start again.', 'wrong-company':'This PAL workspace is already linked to a different QuickBooks company. Contact PAL support.',unavailable:'QuickBooks connection is temporarily unavailable.'};
   const status=typeof req.query.status==='string'?req.query.status:'invalid';
   res.set('Cache-Control','no-store, no-cache');res.send(page('QuickBooks connection',`<p>${messages[status]||messages.invalid}</p>`));
  });
@@ -101,8 +149,8 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
   if(!ready())return res.status(503).send('Not configured');
   try{const c=await connection();if(!c)return res.send(page('Already disconnected','<p>No QuickBooks connection exists.</p>'));
    const tokens=decrypt(c.encrypted_tokens);
-   const r=await fetch(REVOKE_URL,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({token:tokens.refresh_token})});
-   if(!r.ok)throw new Error(`Intuit token revocation failed (${r.status})`);
+   const r=await resilientFetch(REVOKE_URL,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({token:tokens.refresh_token})});
+   if(!r.ok){await recordError('oauth_revoke',r.status,tidOf(r));if(r.status!==400 && r.status!==401)throw new Error(`Intuit token revocation failed (${r.status})`);}
    await db('pal_qbo_connections',{method:'DELETE',query:`tenant=eq.${TENANT}`});
    res.send(page('QuickBooks disconnected','<p>PAL’s QuickBooks authorization was revoked and the stored connection removed.</p>'));
   }catch(e){error(res,e)}
@@ -110,19 +158,21 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
  app.get('/api/baa/quickbooks/test',authorized,async(req,res)=>{
   if(!ready())return res.status(503).json({error:'QuickBooks not configured'});
   try{const c=await connection();if(!c)return res.status(404).json({error:'BAA QuickBooks not connected'});
-   let tokens=decrypt(c.encrypted_tokens);
-   if(Date.now()>tokens.access_expires_at-120000){
-    const next=await tokenRequest({grant_type:'refresh_token',refresh_token:tokens.refresh_token});
-    tokens={access_token:next.access_token,refresh_token:next.refresh_token,access_expires_at:Date.now()+next.expires_in*1000,refresh_expires_at:Date.now()+(next.x_refresh_token_expires_in||0)*1000};
-    await db('pal_qbo_connections',{method:'PATCH',query:`tenant=eq.${TENANT}`,body:{encrypted_tokens:encrypt(tokens),updated_at:new Date().toISOString()}});
-   }
+   let tokens=await refreshIfNeeded(c,decrypt(c.encrypted_tokens));
    // SELECT is read-only; no POST/PUT/DELETE to accounting endpoints in this module.
    const q="select * from Vendor maxresults 5";
    const u=`${API_BASE}/${enc(c.realm_id)}/query?query=${enc(q)}&minorversion=75`;
-   const r=await fetch(u,{headers:{Authorization:`Bearer ${tokens.access_token}`,Accept:'application/json'}});
-   if(!r.ok)throw new Error(`QBO read-only test failed (${r.status})`);
+   let r=await resilientFetch(u,{headers:{Authorization:`Bearer ${tokens.access_token}`,Accept:'application/json'}});
+   if(r.status===401){
+    await recordError('api_query',r.status,tidOf(r));
+    tokens=await refreshIfNeeded(c,tokens,true);
+    r=await resilientFetch(u,{headers:{Authorization:`Bearer ${tokens.access_token}`,Accept:'application/json'}});
+    if(r.status===401){await recordError('api_query',r.status,tidOf(r));throw new ReconnectRequired();}
+   }
+   if(r.status===403){await recordError('api_query',r.status,tidOf(r));throw new ReconnectRequired();}
+   if(!r.ok){await recordError(classifyApiFailure(r.status),r.status,tidOf(r));throw new Error(`QBO read-only test failed (${r.status})`);}
    const data=await r.json();
    res.set('Cache-Control','no-store');res.json({ok:true,tenant:TENANT,vendorCount:(data.QueryResponse?.Vendor||[]).length,readOnly:true});
-  }catch(e){console.error('QBO read test:',e.message);res.status(503).json({error:'QuickBooks read-only test failed'});}
+  }catch(e){if(e instanceof ReconnectRequired)return res.status(401).json({error:'QuickBooks authorization expired. An authorized BAA manager must reconnect QuickBooks.',reconnectUrl:'/quickbooks/connect'});console.error('QBO read test failed');res.status(503).json({error:'QuickBooks read-only test failed'});}
  });
 };
