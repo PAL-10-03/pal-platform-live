@@ -2,7 +2,8 @@
 -- Service-role access ONLY. Never expose these tables to authenticated browser clients.
 create table if not exists public.pal_qbo_connections (
  tenant text primary key check (tenant = 'born-again-air'),
- realm_id text not null unique,
+ realm_id text unique,
+ encrypted_realm_id text,
  encrypted_tokens text not null,
  updated_at timestamptz not null default now()
 );
@@ -18,3 +19,11 @@ alter table public.pal_qbo_oauth_states enable row level security;
 revoke all on public.pal_qbo_connections from anon, authenticated;
 revoke all on public.pal_qbo_oauth_states from anon, authenticated;
 -- Supabase service_role bypasses RLS. No end-user RLS policies are created.
+
+-- Upgrade existing BAA table without touching any accounting data.
+alter table public.pal_qbo_connections add column if not exists encrypted_realm_id text;
+-- Do not drop legacy realm_id until any previously connected rows have been migrated.
+-- The application writes only encrypted_realm_id for all new connections.
+-- Existing installs created realm_id NOT NULL; remove that legacy constraint so
+-- newly authorized connections can store only encrypted_realm_id.
+alter table public.pal_qbo_connections alter column realm_id drop not null;

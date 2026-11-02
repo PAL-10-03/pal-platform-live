@@ -5,6 +5,13 @@ const { clerkMiddleware, getAuth } = require('@clerk/express');
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.disable('x-powered-by');
+app.use((req,res,next)=>{
+ res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');
+ res.setHeader('Pragma','no-cache');
+ res.setHeader('Expires','0');
+ if(req.method==='TRACE'||req.method==='TRACK')return res.status(405).end();
+ next();
+});
 // Baseline browser hardening; CSP is intentionally deferred until Clerk scripts are inventoried.
 app.use((req,res,next)=>{
  res.setHeader('X-Content-Type-Options','nosniff');
