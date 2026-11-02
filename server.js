@@ -36,6 +36,10 @@ function requireCompany(req,res,next){const c=req.params.company;if(!companies.s
 app.get('/health',(_req,res)=>res.json({status:'ok'}));
 app.get('/terms',(_req,res)=>res.sendFile(path.join(__dirname,'public','terms.html')));
 app.get('/privacy',(_req,res)=>res.sendFile(path.join(__dirname,'public','privacy.html')));
+
+// QuickBooks OAuth: tenant-restricted connection, callback, revocation, and read-only test.
+require('./quickbooks-oauth')(app,{getAuth,membership,isOwner});
+
 app.get('/',(req,res)=>res.send(html(req,'home','Home')));
 app.get(['/login','/sign-in'],(req,res)=>res.send(html(req,'login','Sign In')));
 app.get(['/register','/sign-up'],(req,res)=>res.send(html(req,'register','Create Account')));
