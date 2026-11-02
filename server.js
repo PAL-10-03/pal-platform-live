@@ -29,11 +29,13 @@ function membership(req){
 function html(req,view,title){
   const state={view,publishableKey:process.env.CLERK_PUBLISHABLE_KEY||'',signedIn:isSignedIn(req),owner:isOwner(req),membership:membership(req),companies,dropbox:{'born-again-air':process.env.PAL_BAA_DROPBOX_URL||'',newstart:process.env.PAL_NEWSTART_DROPBOX_URL||''}};
   const safe=JSON.stringify(state).replace(/</g,'\\u003c');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css?v=baa-excel-20261026-verified2"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script><script src="/assets/app.js?v=baa-excel-20261026-verified2" defer></script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css?v=baa-excel-20261026-verified2"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script><script src="/assets/app.js?v=baa-excel-20261026-verified2" defer></script><footer class="pal-legal-footer"><span>© 2026 PAL Business Solutions, LLC</span><span class="pal-legal-separator"> · </span><a href="/terms">Terms of Service</a><span class="pal-legal-separator"> · </span><a href="/privacy">Privacy Policy</a></footer></body></html>`;
 }
 function requireOwner(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!isOwner(req))return res.status(403).json({error:'Owner access required'});next();}
 function requireCompany(req,res,next){const c=req.params.company;if(!companies.some(x=>x.id===c))return res.status(404).json({error:'Company not found'});if(!membership(req).companies.includes(c))return res.status(403).json({error:'No access to this company'});next();}
 app.get('/health',(_req,res)=>res.json({status:'ok'}));
+app.get('/terms',(_req,res)=>res.sendFile(path.join(__dirname,'public','terms.html')));
+app.get('/privacy',(_req,res)=>res.sendFile(path.join(__dirname,'public','privacy.html')));
 app.get('/',(req,res)=>res.send(html(req,'home','Home')));
 app.get(['/login','/sign-in'],(req,res)=>res.send(html(req,'login','Sign In')));
 app.get(['/register','/sign-up'],(req,res)=>res.send(html(req,'register','Create Account')));

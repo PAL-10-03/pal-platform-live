@@ -155,3 +155,9 @@ body:has(.pal-empty-home) .signout-button { background:transparent!important; bo
 /* 21.2: Show Newstart original logo below all workspace sections. */
 .newstart-persistent-logo{display:flex;justify-content:center;align-items:center;padding:28px 12px 12px;clear:both}
 .newstart-persistent-logo .newstart-brand-image{width:min(520px,90%);max-width:100%;height:auto;margin:0;object-fit:contain}
+
+/* PAL public legal footer */
+body{padding-bottom:54px}
+.pal-legal-footer{position:relative;z-index:2;min-height:42px;padding:12px 16px;display:flex;justify-content:center;align-items:center;gap:7px;flex-wrap:wrap;color:#8b96a8;font-size:11px;text-align:center;background:#0a1427}
+.pal-legal-footer a{color:#a8b5c8;text-decoration:underline;text-underline-offset:2px}
+.pal-legal-footer a:hover{color:#fff}
