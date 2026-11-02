@@ -1,7 +1,6 @@
 'use strict';
 // PAL QuickBooks Online OAuth — BAA only, no accounting writes.
 const crypto = require('crypto');
-const express = require('express');
 const TENANT = 'born-again-air';
 const BASE = 'https://palbiz.app';
 const CALLBACK = `${BASE}/quickbooks/callback`;
@@ -19,6 +18,14 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
  const rawKey = process.env.QBO_TOKEN_ENCRYPTION_KEY || '';
  const key = /^[0-9a-f]{64}$/i.test(rawKey) ? Buffer.from(rawKey,'hex') : null;
  const ready = () => Boolean(supa && supaKey && clientId && secret && key);
+ const trustedOrigins = new Set(['https://palbiz.app','https://www.palbiz.app']);
+ function requireSameOrigin(req,res,next) {
+  const origin=req.get('origin');
+  if (!origin || !trustedOrigins.has(origin)) return res.status(403).send('Invalid request origin');
+  const fetchSite=req.get('sec-fetch-site');
+  if (fetchSite && !['same-origin','same-site'].includes(fetchSite)) return res.status(403).send('Cross-site request rejected');
+  next();
+ }
  const headers = {apikey:supaKey, Authorization:`Bearer ${supaKey}`,'Content-Type':'application/json'};
  const auth = 'Basic '+Buffer.from(`${clientId}:${secret}`).toString('base64');
  function authorized(req,res,next) {
@@ -44,7 +51,7 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
   try {const c=ready()?await connection():null;res.send(page('Connect QuickBooks',`<p>Connect Born Again Air’s QuickBooks Online company to PAL. Only an authorized company manager may approve access.</p>${c?`<p><strong>Connected QuickBooks company:</strong> ${esc(c.realm_id)}</p><p>Reconnect only to the same company.</p>`:''}${ready()?'<form method="post" action="/quickbooks/connect/start"><button type="submit">Connect or reconnect QuickBooks</button></form>':'<p><strong>Connection is not enabled yet.</strong> PAL must configure Intuit credentials and encrypted storage first.</p>'}<p>PAL will use read-only accounting API requests during initial testing. No bills, payments, or expenses will be created.</p>`));}
   catch(e){error(res,e)}
  });
- app.post('/quickbooks/connect/start',authorized,async(req,res)=>{
+ app.post('/quickbooks/connect/start',authorized,requireSameOrigin,async(req,res)=>{
   if(!ready())return res.status(503).send(page('Not configured','<p>Production credentials and encryption are required.</p>'));
   try{
    const state=crypto.randomBytes(32).toString('hex');
@@ -60,8 +67,14 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
   if(typeof state!=='string'||!(/^[0-9a-f]{64}$/.test(state)))return res.status(400).send('Invalid OAuth state');
   try {
    const hash=crypto.createHash('sha256').update(state).digest('hex');
-   const rows=await db('pal_qbo_oauth_states',{method:'DELETE',query:`state_hash=eq.${hash}&tenant=eq.${TENANT}&expires_at=gt.${enc(new Date().toISOString())}&select=state_hash`,prefer:'return=representation'});
+   const rows=await db('pal_qbo_oauth_states',{method:'DELETE',query:`state_hash=eq.${hash}&tenant=eq.${TENANT}&expires_at=gt.${enc(new Date().toISOString())}&select=state_hash,clerk_user_id`,prefer:'return=representation'});
    if(rows.length!==1)return res.status(400).send('Authorization expired or already used. Start again from PAL.');
+   // Bind the OAuth response to the same signed-in, still-authorized manager who initiated it.
+   const callbackUser=getAuth(req).userId;
+   const initiatedBy=rows[0].clerk_user_id;
+   const m=membership(req);
+   if(!callbackUser || callbackUser!==initiatedBy || !(isOwner(req) || (m.role==='manager' && m.companies.includes(TENANT))))
+    return res.status(403).send(page('Authorization not completed','<p>Sign in as the same authorized BAA manager and start again. No connection was saved.</p>')); 
    if(oauthError)return res.status(400).send(page('Connection cancelled','<p>QuickBooks authorization was cancelled. No accounting changes were made.</p>'));
    if(typeof code!=='string'||typeof realmId!=='string'||!/^\d{5,30}$/.test(realmId))return res.status(400).send('Invalid authorization response');
    const current=await connection();
@@ -75,10 +88,8 @@ module.exports = function registerQuickBooks(app, { getAuth, membership, isOwner
  app.get('/quickbooks/disconnect',authorized,async(req,res)=>{
   try{const c=ready()?await connection():null;res.send(page('Disconnect QuickBooks',`<p>${c?`Born Again Air is connected to QuickBooks company ${esc(c.realm_id)}.`:'No active QuickBooks connection is available.'}</p>${c?'<p>Disconnecting removes PAL’s stored authorization. It does not delete any QuickBooks transactions.</p><form method="post" action="/quickbooks/disconnect"><button type="submit">Confirm disconnect</button></form>':''}`));}catch(e){error(res,e)}
  });
- app.post('/quickbooks/disconnect',authorized,async(req,res)=>{
+ app.post('/quickbooks/disconnect',authorized,requireSameOrigin,async(req,res)=>{
   if(!ready())return res.status(503).send('Not configured');
-  // Browser-origin check for this state-changing form (Clerk authentication remains mandatory).
-  const origin=req.get('origin'); if(origin!==BASE && origin!=='https://www.palbiz.app')return res.status(403).send('Invalid request origin');
   try{const c=await connection();if(!c)return res.send(page('Already disconnected','<p>No QuickBooks connection exists.</p>'));
    const tokens=decrypt(c.encrypted_tokens);
    const r=await fetch(REVOKE_URL,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({token:tokens.refresh_token})});

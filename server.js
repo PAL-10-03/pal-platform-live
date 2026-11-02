@@ -5,6 +5,15 @@ const { clerkMiddleware, getAuth } = require('@clerk/express');
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.disable('x-powered-by');
+// Baseline browser hardening; CSP is intentionally deferred until Clerk scripts are inventoried.
+app.use((req,res,next)=>{
+ res.setHeader('X-Content-Type-Options','nosniff');
+ res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
+ res.setHeader('X-Frame-Options','DENY');
+ res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
+ if(req.secure || req.get('x-forwarded-proto')==='https') res.setHeader('Strict-Transport-Security','max-age=31536000');
+ next();
+});
 app.use((req,res,next)=>{if(!req.path.startsWith('/api/')&&!req.path.startsWith('/assets/'))res.set('Cache-Control','no-store, no-cache, must-revalidate');next();});
 app.set('trust proxy', 1);
 const origins = (process.env.CLERK_AUTHORIZED_PARTIES || 'https://palbiz.app,https://www.palbiz.app').split(',').map(x=>x.trim()).filter(Boolean);
