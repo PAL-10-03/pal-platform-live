@@ -4,6 +4,7 @@
 const a=require('./core');
 const {localParts}=require('./schedule');
 const {configuration,deliver}=require('./ceo-email');
+const xai=require('./xai');
 const NAMES={'born-again-air':'Born Again Air',newstart:'Newstart'};
 async function run(tenant,now=new Date()){
  if(!Object.hasOwn(NAMES,tenant))throw Error('Unknown tenant');
@@ -20,7 +21,14 @@ async function run(tenant,now=new Date()){
  const held=(jobs||[]).filter(j=>j.status==='held').length;
  const failed=(jobs||[]).filter(j=>['failed','exhausted'].includes(j.status)).length;
  const body=[`Good morning, ${NAMES[tenant]}.`,'',`PAL Daily Check-in — ${day}`,'',`Automated document intake: ${readerText}`,`Automation items currently held for review (recent queue): ${held}.`,`Failed or exhausted items visible in recent queue: ${failed}.`,'','QuickBooks financial balances and reconciliations: Not verified in this check-in.','No accounting figures are being reported as zero or as confirmed.','', 'This is an operational check-in, not a financial report. Formal reports are provided separately when verified.','', 'PAL Business Solutions'].join('\n');
- const result=await deliver({tenant,dispatchKey:`daily-checkin:${day}`,subject:'Daily Check-in',body});
+ let outgoing=body;
+ // Optional CEO composition: bounded by verified status; no QuickBooks figures or claims of activity.
+ if(process.env.PAL_CEO_GROK_COMPOSE==='true'&&tenant==='born-again-air'){
+  const prompt=`Write a concise customer-facing operational Daily Check-in using ONLY the verified facts below. Do not add new facts, transactions, financial balances, approvals or promises. Preserve the explicit QuickBooks-unverified warning. Output plain text only.\n\n${body}`;
+  outgoing=await xai.ask('ceo',prompt);
+  if(typeof outgoing!=='string'||outgoing.length<80||outgoing.length>12000||!outgoing.toLowerCase().includes('quickbooks'))throw Error('CEO generated content failed validation; email not sent');
+ }
+ const result=await deliver({tenant,dispatchKey:`daily-checkin:${day}`,subject:'Daily Check-in',body:outgoing});
  return {status:'provider-accepted',day,...result};
 }
 module.exports={run};

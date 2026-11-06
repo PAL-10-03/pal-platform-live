@@ -4,6 +4,7 @@
 const crypto=require('node:crypto');
 const a=require('./core');
 const reader=require('./reader');
+const roles=require('./role-executor');
 const workerId=`pal-${crypto.randomUUID()}`;
 // A single scheduler tick is intentionally bounded to one claimed job.
 async function rpc(name,body){return a.db(`rpc/${name}`,{method:'POST',body});}
@@ -30,6 +31,9 @@ async function runOnce(tenant='born-again-air'){
     await a.enqueue(tenant,'reader',`${job.job_key.replace(/:batch:\d+$/,'')}:batch:${batch+1}`,{source:'documents',batch:batch+1,parentJob:job.id});
    }
    status='completed';
+  } else if(['ceo','bookkeeper','banker','negotiator','reporter'].includes(job.role) && process.env.PAL_ADVISORY_EXECUTION==='true'){
+   result=await roles.execute({tenant,job});
+   status=result.mode==='held'?'held':'completed';
   }
   if(lostLease)throw Error('Worker lease lost; refusing completion');
   await a.event(tenant,job.id,status==='completed'?'job_completed':'job_held',result);

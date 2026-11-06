@@ -2,20 +2,26 @@
 // Only the CEO communication channel may send. No financial data leaves unless
 // explicitly supplied by authorized owner; customer recipients are tenant-bound.
 const a=require('./core');
+const gmail=require('./gmail');
 const NAMES=Object.freeze({'born-again-air':'Born Again Air',newstart:'Newstart'});
 const busy=new Set();
 function configuration(tenant){
  if(!Object.hasOwn(NAMES,tenant))throw Error('Unknown tenant');
  if(process.env.PAL_CEO_EMAIL_ENABLED!=='true')throw Error('CEO email delivery disabled');
- const from=process.env.PAL_EMAIL_FROM,owner=process.env.PAL_OWNER_REPORT_EMAIL,key=process.env.RESEND_API_KEY;
- if(!from||!owner||!key)throw Error('CEO email credentials or owner copy address missing');
+ const from=process.env.PAL_EMAIL_FROM,owner=process.env.PAL_OWNER_REPORT_EMAIL;
+ const provider=process.env.PAL_EMAIL_PROVIDER||'gmail';
+ if(!from||!owner)throw Error('CEO sender or owner copy address missing');
+ if(provider==='gmail'&&!gmail.configured())throw Error('Gmail OAuth credentials missing');
+ if(provider==='resend'&&!process.env.RESEND_API_KEY)throw Error('Resend credentials missing');
+ if(!['gmail','resend'].includes(provider))throw Error('Unknown email provider');
  const map=JSON.parse(process.env.PAL_CUSTOMER_REPORT_RECIPIENTS_JSON||'{}');
  const customer=map[tenant];
  if(typeof customer!=='string'||!customer.includes('@'))throw Error('No authorized customer recipient for tenant');
  if(!owner.includes('@'))throw Error('Invalid owner copy recipient');
- return {from,owner,key,customer,name:NAMES[tenant]};
+ return {from,owner,key:process.env.RESEND_API_KEY,provider,customer,name:NAMES[tenant]};
 }
-async function send({key,from,to,subject,text}){
+async function send({key,provider,from,to,subject,text}){
+ if(provider==='gmail')return gmail.send({from,to,subject,text});
  const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({from,to:[to],subject,text}),signal:AbortSignal.timeout(15000)});
  if(!r.ok)throw Error(`Email provider HTTP ${r.status}`);
  const result=await r.json();if(!result.id)throw Error('Email provider did not confirm acceptance');return result.id;
