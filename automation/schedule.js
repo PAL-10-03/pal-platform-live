@@ -16,6 +16,7 @@ async function scheduleTenant(tenant,now=new Date()){
  const created=[];
  // Cron can be delayed or miss a minute. Enqueue due jobs on every subsequent tick.
  const due=[{minute:0,role:'reader',key:`reader:${day}`,payload:{source:'documents',date:day}},
+ {minute:60,role:'banker',key:`banker-daily:${day}`,payload:{source:'qbo-daily',date:day}},
  {minute:240,role:'cleanup',key:`cleanup:${day}`,payload:{date:day,deleteEnabled:false}},
  {minute:360,role:'ceo',key:`daily-report:${day}`,payload:{date:day,sendEmail:false}}];
  for(const item of due){if(minutes<item.minute)continue;
