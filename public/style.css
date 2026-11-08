@@ -166,3 +166,16 @@ body{padding-bottom:54px}
 
 /* Newstart-only presentation refinements */
 .ns-brand-heading img{display:block;width:min(390px,75vw);height:auto;max-height:82px;object-fit:contain;object-position:left center}.ns-feature-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0}.ns-feature{background:#fff;border:1px solid #dce4ed;border-radius:13px;padding:16px;display:flex;align-items:center;flex-direction:column;gap:10px;color:#173d57;font-weight:700;cursor:pointer}.ns-feature img{height:90px;width:100%;object-fit:contain}.ns-feature:hover{border-color:#0c6ca3;background:#f7fbfe}.ns-muted{font-size:12px;color:#687b8a}.ns-alert{border-left:3px solid #3d86b7;padding:9px 12px;background:#f3f8fc}.ns-overdue{border-left:4px solid #c62828;padding:9px 12px;color:#aa2020;background:#fff2f2}.ns-shopping-row[hidden]{display:none}@media(max-width:650px){.ns-feature-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.ns-feature img{height:70px}}
+
+/* Newstart-only ten illustrated navigation tabs, centered in two rows. */
+.newstart-tabs{display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;max-width:1160px;margin:16px auto 26px;align-items:stretch}
+.newstart-tabs button{min-width:0!important;width:100%;min-height:128px;padding:13px 7px!important;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;border-radius:12px;white-space:normal;line-height:1.2;font-weight:700}
+.newstart-tabs button img{height:67px;width:90%;object-fit:contain;pointer-events:none}
+.newstart-tabs button span{display:block;pointer-events:none}
+.newstart-tabs button.selected{outline:3px solid #80b9e5;outline-offset:1px}
+.ns-dashboard-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ns-alert-summary{font:inherit;text-align:left;cursor:pointer;color:inherit!important;background:#fff!important;border:1px solid #dce4ed!important}
+.ns-alert-summary:hover{border-color:#3d86b7!important;background:#f5faff!important}
+#ns-alert-details[hidden]{display:none!important}
+@media(max-width:720px){.newstart-tabs{gap:6px}.newstart-tabs button{min-height:95px;padding:7px 3px!important;font-size:10px!important}.newstart-tabs button img{height:42px}.ns-dashboard-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.ns-dashboard-stats .ns-panel{padding:9px}.ns-dashboard-stats .ns-panel strong{font-size:23px}}
+.newstart-tabs button img{background:#f5f9fc;border-radius:10px;padding:7px;box-sizing:border-box}
