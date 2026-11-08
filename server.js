@@ -130,6 +130,8 @@ app.get(['/api/baa/reports/access','/api/newstart/reports/access'],(req,res)=>{
  if(!membership(req).companies.includes(tenant))return res.status(403).json({error:'No access to this company'});
  res.set('Cache-Control','no-store');res.json({ok:true});
 });
+// Shared, tenant-isolated PDF report archive (BAA and Newstart).
+require('./automation/report-storage')(app,{membership,isOwner,isSignedIn,supaUrl,supaKey,bucket,checkManagerPin});
 // Draft 15: owner/BAA-manager accounting reference management. No QBO writes.
 const {db: palDb}=require('./automation/core');
 function baaManagerAccess(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!(isOwner(req)||(membership(req).role==='manager'&&membership(req).companies.includes('born-again-air'))))return res.status(403).json({error:'Manager access required'});next();}
