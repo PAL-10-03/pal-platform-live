@@ -45,7 +45,7 @@ function membership(req){
 function html(req,view,title){
   const state={view,publishableKey:process.env.CLERK_PUBLISHABLE_KEY||'',signedIn:isSignedIn(req),owner:isOwner(req),membership:membership(req),companies,dropbox:{'born-again-air':process.env.PAL_BAA_DROPBOX_URL||'',newstart:process.env.PAL_NEWSTART_DROPBOX_URL||''}};
   const safe=JSON.stringify(state).replace(/</g,'\\u003c');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css?v=baa-excel-20261026-verified2"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script><script src="/assets/app.js?v=baa-excel-20261026-verified2" defer></script><footer class="pal-legal-footer"><span>© 2026 PAL Business Solutions, LLC</span><span class="pal-legal-separator"> · </span><a href="/terms">Terms of Service</a><span class="pal-legal-separator"> · </span><a href="/privacy">Privacy Policy</a><span class="pal-legal-separator"> · </span><a href="mailto:admin@palbiz.app?subject=PAL%20Customer%20Support" style="color:#8c94a3;font-size:inherit;text-decoration:none">Contact Support</a></footer></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1427"><title>${title} | PAL Business Solutions</title><link rel="stylesheet" href="/assets/style.css?v=baa-excel-20261026-verified2"></head><body><div id="app"></div><script id="pal-state" type="application/json">${safe}</script>${view==='newstart'?'<script src="/assets/newstart-ops.js?v=20261108" defer></script>':''}<script src="/assets/app.js?v=baa-excel-20261026-verified2" defer></script><footer class="pal-legal-footer"><span>© 2026 PAL Business Solutions, LLC</span><span class="pal-legal-separator"> · </span><a href="/terms">Terms of Service</a><span class="pal-legal-separator"> · </span><a href="/privacy">Privacy Policy</a><span class="pal-legal-separator"> · </span><a href="mailto:admin@palbiz.app?subject=PAL%20Customer%20Support" style="color:#8c94a3;font-size:inherit;text-decoration:none">Contact Support</a></footer></body></html>`;
 }
 function requireOwner(req,res,next){if(!isSignedIn(req))return res.status(401).json({error:'Sign in required'});if(!isOwner(req))return res.status(403).json({error:'Owner access required'});next();}
 function requireCompany(req,res,next){const c=req.params.company;if(!companies.some(x=>x.id===c))return res.status(404).json({error:'Company not found'});if(!membership(req).companies.includes(c))return res.status(403).json({error:'No access to this company'});next();}
@@ -424,6 +424,20 @@ for(const [apiName,tenant,manager] of [['baa','born-again-air',baaManagerAccess]
   }catch(e){console.error('Vendor remove',e.message);res.status(503).json({error:'Vendor could not be removed'});}
  });
 }
+
+// Newstart-only module. Does not register any Born Again Air routes.
+require('./newstart-operations')(app,{db:palDb,membership,isOwner,isSignedIn,getAuth});
+// Newstart-only recurring checklist maintenance (not a Grok bot).
+// Idempotent database function creates at most one checklist per house/month.
+async function palNewstartMonthlyChecklists(){
+ try {const month=new Date().toISOString().slice(0,7)+'-01';await palDb('rpc/pal_ns_ensure_monthly',{method:'POST',body:{p_month:month,p_actor:'pal-newstart-system'}});}
+ catch(e){console.warn('Newstart monthly checklist creation deferred:',e.message);}
+}
+if(process.env.PAL_NEWSTART_MONTHLY_CHECKLISTS==='true'){
+ setTimeout(palNewstartMonthlyChecklists,15000);
+ const timer=setInterval(palNewstartMonthlyChecklists,6*60*60*1000);timer.unref?.();
+}
+
 
 // Register the terminal 404 handler only after all company routes.
 app.use((_req,res)=>res.status(404).send('Page not found'));
