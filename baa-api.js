@@ -242,6 +242,19 @@ app.post('/api/baa/compressor-orders/:id/complete',manager,json,async(req,res)=>
  if(!all.length)return res.sendStatus(404);if(all.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish every box first'});
  const first=all.find(b=>b.id===req.params.id);if(!first)return res.sendStatus(404);first.orderComplete=true;first.updatedAt=new Date().toISOString();await write('box-'+first.id,first);res.json({ok:true});
  }catch(e){res.status(500).json({error:e.message});}});
+// Delete a complete shipping order (all its boxes), manager-only; no other tenants touched.
+async function deleteShippingOrder(req,res,type){try{
+ const id=req.params.id;if(!safeId(id))return res.sendStatus(400);
+ const ids=await read('box-index',[]);
+ const all=(await Promise.all(ids.map(boxId=>read('box-'+boxId,null)))).filter(b=>b?.orderId===id&&b.type===type);
+ if(!all.length)return res.status(404).json({error:'Order not found'});
+ const removing=new Set(all.map(b=>b.id));
+ await write('box-index',ids.filter(boxId=>!removing.has(boxId)));
+ for(const b of all)await removeStoredBox(b.id);
+ res.json({ok:true,deletedBoxes:all.length});
+ }catch(e){res.status(500).json({error:e.message});}}
+app.delete('/api/baa/compressor-orders/:id',manager,(req,res)=>deleteShippingOrder(req,res,'compressor-shipping'));
+app.delete('/api/baa/core-orders/:id',manager,(req,res)=>deleteShippingOrder(req,res,'core-shipping'));
 app.get('/api/baa/compressor-orders/:id/export',manager,async(req,res)=>{try{
  if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const boxes=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='compressor-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
  if(!boxes.length)return res.sendStatus(404);const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
