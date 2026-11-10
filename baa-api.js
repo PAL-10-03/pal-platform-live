@@ -139,17 +139,6 @@ app.post('/api/baa/prices/upload',manager,require('express').raw({type:['applica
  }catch(e){res.status(422).json({error:e.message});}
  finally{priceUploadLock.busy=false;}
 });
-
-// Born Again Air compressor orders only; never shared with other tenant routes.
-async function compressorOrder(id){if(!safeId(id))return null;return read('compressor-order-'+id,null);}
-async function orderDetails(order){const boxes=await Promise.all(order.boxIds.map(id=>read('box-'+id,null)));if(boxes.some(b=>!b||b.type!=='compressor-shipping'||b.orderId!==order.id))throw Error('Order contains a missing or invalid box');return {...order,boxes:boxes.map(summary)};}
-app.get('/api/baa/compressor-orders',manager,async(req,res)=>{try{const ids=await read('compressor-order-index',[]);const orders=await Promise.all(ids.map(compressorOrder));res.json(orders.filter(Boolean).reverse());}catch(e){res.status(500).json({error:e.message});}});
-app.post('/api/baa/compressor-orders',manager,json,async(req,res)=>{try{const name=String(req.body.name||'').trim();if(!name||name.length>100)return res.status(400).json({error:'Enter an order or PO reference (maximum 100 characters)'});const id=require('crypto').randomUUID(),boxId=require('crypto').randomUUID(),now=new Date().toISOString();const order={id,name,status:'draft',boxIds:[boxId],createdAt:now,updatedAt:now,createdBy:auth.user(req)};const box={id:boxId,name:'Box 1',type:'compressor-shipping',orderId:id,boxNumber:1,status:'draft',receivingTotal:null,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};await write('box-'+boxId,box);await write('compressor-order-'+id,order);const boxIds=await read('box-index',[]);await write('box-index',[...boxIds,boxId]);const ids=await read('compressor-order-index',[]);await write('compressor-order-index',[...ids,id]);res.status(201).json(await orderDetails(order));}catch(e){res.status(500).json({error:e.message});}});
-app.get('/api/baa/compressor-orders/:id',manager,async(req,res)=>{try{const o=await compressorOrder(req.params.id);if(!o)return res.sendStatus(404);res.json(await orderDetails(o));}catch(e){res.status(500).json({error:e.message});}});
-app.post('/api/baa/compressor-orders/:id/next-box',manager,json,async(req,res)=>{try{const o=await compressorOrder(req.params.id);if(!o)return res.sendStatus(404);if(o.status!=='draft')return res.status(409).json({error:'Order already completed'});const last=await read('box-'+o.boxIds[o.boxIds.length-1],null);if(!last||last.status!=='finished')return res.status(409).json({error:'Finish the current box before starting another'});const id=require('crypto').randomUUID(),now=new Date().toISOString(),num=o.boxIds.length+1;const b={id,name:'Box '+num,type:'compressor-shipping',orderId:o.id,boxNumber:num,status:'draft',receivingTotal:null,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};await write('box-'+id,b);o.boxIds.push(id);o.updatedAt=now;await write('compressor-order-'+o.id,o);const ids=await read('box-index',[]);await write('box-index',[...ids,id]);res.status(201).json(await orderDetails(o));}catch(e){res.status(500).json({error:e.message});}});
-app.post('/api/baa/compressor-orders/:id/complete',manager,json,async(req,res)=>{try{const o=await compressorOrder(req.params.id);if(!o)return res.sendStatus(404);if(o.status!=='draft')return res.status(409).json({error:'Order already completed'});const d=await orderDetails(o);if(!d.boxes.length||d.boxes.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish every box before completing the order'});o.status='completed';o.completedAt=new Date().toISOString();o.updatedAt=o.completedAt;await write('compressor-order-'+o.id,o);res.json(await orderDetails(o));}catch(e){res.status(500).json({error:e.message});}});
-app.get('/api/baa/compressor-orders/:id/export',manager,async(req,res)=>{try{const o=await compressorOrder(req.params.id);if(!o)return res.sendStatus(404);const boxes=await Promise.all(o.boxIds.map(id=>read('box-'+id,null)));if(boxes.some(b=>!b||b.type!=='compressor-shipping'||b.orderId!==o.id))return res.status(409).json({error:'Order has invalid box data'});const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;for(let i=0;i<boxes.length;i++){const sh=wb.addWorksheet('Box '+(i+1));await fillCompressorWorksheet(wb,sh,boxes[i]);}const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-Compressor-Order-${o.id.slice(0,8)}.xlsx"`});res.send(Buffer.from(data));}catch(e){res.status(500).json({error:e.message});}});
-
 app.get('/api/baa/boxes',manager,async(req,res)=>{try{const ids=await read('box-index',[]);const all=await Promise.all(ids.map(id=>read('box-'+id,null)));res.json(all.filter(Boolean).map(b=>({id:b.id,name:b.name,type:b.type,status:b.status,updatedAt:b.updatedAt,totalQty:summary(b).totalQty,pricedTotal:summary(b).pricedTotal,unpriced:summary(b).unpriced})).reverse());}catch(e){res.status(500).json({error:e.message});}});
 app.post('/api/baa/boxes',manager,json,async(req,res)=>{try{const type=req.body.type;if(!['core-shipping','compressor-shipping','core-receiving'].includes(type))return res.status(400).json({error:'Invalid type'});const id=require('crypto').randomUUID();const b={id,name:String(req.body.name||type).slice(0,100),type,status:'draft',receivingTotal:null,items:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),createdBy:auth.user(req)};await write('box-'+id,b);const ids=await read('box-index',[]);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 // Manager-only deletion; the index is updated before removing the stored box.
@@ -159,7 +148,6 @@ app.delete('/api/baa/boxes/:id',manager,async(req,res)=>{try{
  if(!ids.includes(id))return res.status(404).json({error:'Saved box not found'});
  const box=await read('box-'+id,null);
  if(!box)return res.status(404).json({error:'Saved box not found'});
- if(box.orderId)return res.status(409).json({error:'This box belongs to a compressor order and cannot be deleted separately'});
  await write('box-index',ids.filter(x=>x!==id));
  await removeStoredBox(id);
  res.json({ok:true,deleted:id});
@@ -182,13 +170,13 @@ app.post('/api/baa/boxes/:id/items',manager,json,async(req,res)=>{try{const id=r
   for(const extra of sameIdentity.slice(1)){existing.qty+=extra.qty;b.items=b.items.filter(x=>x.id!==extra.id);}
  }else b.items.push({id:require('crypto').randomUUID(),part:p,core:c,qty,price,...(isCompressor?{basePrice:65.5,coreChargeApplied:coreCharge,coreCharge:charge,unknownPart:unknown,missingCorePrice:missingCorePrice,model:row?.model||catalogModels[p]||null,priceSource:resolved.priceSource}:{priceSource:resolved.priceSource})});b.audit=b.audit||[];b.audit.push({action:'add',part:p,core:c,qty,by:auth.user(req),at:new Date().toISOString()});b.updatedAt=new Date().toISOString();await write('box-'+id,b);res.json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 // Editing a finished box requires explicit reopening and is recorded in its audit history.
-app.post('/api/baa/boxes/:id/reopen',manager,json,async(req,res)=>{try{if(!safeId(req.params.id))return res.sendStatus(400);const b=await read('box-'+req.params.id,null);if(b?.orderId){const order=await compressorOrder(b.orderId);if(order?.status==='completed')return res.status(409).json({error:'Completed orders cannot be reopened'});}if(!b)return res.sendStatus(404);if(b.status!=='finished')return res.status(409).json({error:'Box is not finished'});b.audit=b.audit||[];b.audit.push({action:'reopen',by:auth.user(req),at:new Date().toISOString()});b.status='draft';b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);res.json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/baa/boxes/:id/reopen',manager,json,async(req,res)=>{try{if(!safeId(req.params.id))return res.sendStatus(400);const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(b.status!=='finished')return res.status(409).json({error:'Box is not finished'});b.audit=b.audit||[];b.audit.push({action:'reopen',by:auth.user(req),at:new Date().toISOString()});b.status='draft';b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);res.json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 app.patch('/api/baa/boxes/:id',manager,json,async(req,res)=>{try{if(!safeId(req.params.id))return res.sendStatus(400);const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(b.status!=='draft')return res.status(409).json({error:'Reopen finished box before editing'});if(b.type==='core-receiving'&&Object.prototype.hasOwnProperty.call(req.body,'receivingTotal')){const v=num(req.body.receivingTotal);if(v!==null&&(!Number.isFinite(v)||v<0))return res.status(400).json({error:'Enter a valid total dollar amount'});b.audit=b.audit||[];b.audit.push({action:'receiving-total',from:b.receivingTotal??null,to:v,by:auth.user(req),at:new Date().toISOString()});b.receivingTotal=v;b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);return res.json(summary(b));}const name=String(req.body.name||'').trim();if(!name||name.length>100)return res.status(400).json({error:'Box name required (max 100 characters)'});b.audit=b.audit||[];b.audit.push({action:'rename',from:b.name,to:name,by:auth.user(req),at:new Date().toISOString()});b.name=name;b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);res.json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 app.patch('/api/baa/boxes/:id/items/:item',manager,json,async(req,res)=>{try{if(!safeId(req.params.id))return res.sendStatus(400);const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(b.status!=='draft')return res.status(409).json({error:'Reopen finished box before editing'});const x=b.items.find(x=>x.id===req.params.item);if(!x)return res.sendStatus(404);const qty=Number(req.body.qty);if(!Number.isSafeInteger(qty)||qty<1||qty>100000)return res.status(400).json({error:'Invalid quantity'});b.audit=b.audit||[];b.audit.push({action:'quantity',item:x.id,from:x.qty,to:qty,by:auth.user(req),at:new Date().toISOString()});x.qty=qty;b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);res.json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 app.delete('/api/baa/boxes/:id/items/:item',manager,async(req,res)=>{const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(b.status!=='draft')return res.sendStatus(409);b.audit=b.audit||[];b.audit.push({action:'remove',item:req.params.item,by:auth.user(req),at:new Date().toISOString()});b.items=b.items.filter(x=>x.id!==req.params.item);b.updatedAt=new Date().toISOString();await write('box-'+b.id,b);res.json(summary(b));});
 app.post('/api/baa/boxes/:id/finish',manager,async(req,res)=>{const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);if(!b.items.length)return res.status(400).json({error:'Box is empty'});if(b.type==='core-shipping'&&b.items.some(x=>x.price===null||x.price===undefined))return res.status(409).json({error:'Unpriced cores cannot be shipped. Remove and label them for HOLD ASIDE.'});if(b.type==='core-shipping'&&b.items.some(x=>x.price===null)&&!req.body?.acknowledgeUnpriced)return res.status(409).json({error:'Some items have no price. Confirm explicitly before finishing.'});b.status='finished';b.finishedBy=auth.user(req);b.finishedAt=new Date().toISOString();b.updatedAt=b.finishedAt;await write('box-'+b.id,b);res.json(summary(b));});
-
-async function fillCompressorWorksheet(wb,sh,b){
+function compressorSheet(wb,b,models,sheetName){
+ const sh=wb.addWorksheet(sheetName);
   // Compressor purchase order only. Other box exports retain their existing path.
   // Purchase-order heading: three merged white sections, then one blank row.
   for(const [range,anchor,label] of [['A1:D1','A1','REMAN. COMPRESSORS'],['E1:H1','E1','R&R Reynosa'],['I1:L1','I1','Date']]){
@@ -201,7 +189,6 @@ async function fillCompressorWorksheet(wb,sh,b){
   sh.getRow(3).height=20;
   const money='"$"#,##0.00';
   // Catalog currently stores part/core; model appears only if the catalog actually has one.
-  const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));
   [...b.items].sort((a,b)=>String(a.core??'').localeCompare(String(b.core??''),undefined,{numeric:true,sensitivity:'base'})).forEach((x,i)=>{
    const n=i+4,qty=Number(x.qty),unknown=Boolean(x.unknownPart),missing=Boolean(x.missingCorePrice),base=unknown?null:Number(x.basePrice??65.5),charge=unknown||missing?null:Number(x.coreCharge??Math.max(0,Number(x.price)-base));
    sh.getCell(`A${n}`).value=qty;
@@ -230,16 +217,47 @@ async function fillCompressorWorksheet(wb,sh,b){
   sh.getCell(`H${t}`).border={bottom:{style:'double',color:{argb:'FF111111'}}};
   sh.getRow(t).height=23;
   sh.views=[{state:'frozen',ySplit:3}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:L${t}`,orientation:'landscape'};
-}
 
+}
+// Compressor orders reuse the existing BAA box-index and box objects. No new storage keys.
+app.post('/api/baa/compressor-orders',manager,json,async(req,res)=>{try{
+ const reference=String(req.body.reference||'').trim();if(!reference||reference.length>75)return res.status(400).json({error:'Order reference required (max 75 characters)'});
+ const id=require('crypto').randomUUID(),now=new Date().toISOString();
+ const b={id,name:`${reference} - Box 1`,type:'compressor-shipping',status:'draft',orderId:id,orderReference:reference,boxNumber:1,orderComplete:false,receivingTotal:null,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};
+ await write('box-'+id,b);const ids=await read('box-index',[]);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));
+ }catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/baa/compressor-orders/:id',manager,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='compressor-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!all.length)return res.sendStatus(404);res.json({reference:all[0].orderReference,complete:Boolean(all[0].orderComplete),boxes:all.map(summary)});
+ }catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/baa/compressor-orders/:id/next-box',manager,json,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='compressor-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!all.length)return res.sendStatus(404);if(all[0].orderComplete)return res.status(409).json({error:'Order already complete'});
+ if(all.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish the current box first'});
+ const number=all.length+1,id=require('crypto').randomUUID(),now=new Date().toISOString();const b={id,name:`${all[0].orderReference} - Box ${number}`,type:'compressor-shipping',status:'draft',orderId:req.params.id,orderReference:all[0].orderReference,boxNumber:number,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};
+ await write('box-'+id,b);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));
+ }catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/baa/compressor-orders/:id/complete',manager,json,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='compressor-shipping');
+ if(!all.length)return res.sendStatus(404);if(all.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish every box first'});
+ const first=all.find(b=>b.id===req.params.id);if(!first)return res.sendStatus(404);first.orderComplete=true;first.updatedAt=new Date().toISOString();await write('box-'+first.id,first);res.json({ok:true});
+ }catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/baa/compressor-orders/:id/export',manager,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const boxes=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='compressor-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!boxes.length)return res.sendStatus(404);const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
+ boxes.forEach(b=>compressorSheet(wb,b,models,`Box ${b.boxNumber}`));const data=await wb.xlsx.writeBuffer();const filename=String(boxes[0].orderReference).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60);
+ res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${filename}.xlsx"`});res.send(Buffer.from(data));
+ }catch(e){res.status(500).json({error:e.message});}});
 app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
  const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);
- const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;const sh=wb.addWorksheet('Buy List');
+ const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
  if(b.type==='compressor-shipping'){
-  await fillCompressorWorksheet(wb,sh,b);
+  const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));
+  compressorSheet(wb,b,models,'Buy List');
   const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});return res.send(Buffer.from(data));
  }
 
+ const sh=wb.addWorksheet('Buy List');
  // Core Shipping and Core Receiving only: merged identification row and white spacer.
  const coreHeading=b.type==='core-receiving'?'CORES RECEIVING':'CORES';
  for(const [range,anchor,label] of [['A1:D1','A1',coreHeading],['E1:H1','E1','CUSTOMER'],['I1:K1','I1','DATE']]){
