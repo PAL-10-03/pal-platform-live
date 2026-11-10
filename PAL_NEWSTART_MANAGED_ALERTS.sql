@@ -22,3 +22,6 @@ revoke all on public.pal_ns_managed_alerts from anon, authenticated;
 alter table public.pal_ns_managed_alerts add column if not exists recurrence text not null default 'One Time';
 alter table public.pal_ns_managed_alerts add column if not exists last_completed_at timestamptz;
 alter table public.pal_ns_managed_alerts add column if not exists last_completed_by text;
+
+-- Add Now: safely adds an immediate-activation flag to Newstart alerts only.
+alter table public.pal_ns_managed_alerts add column if not exists activate_immediately boolean not null default false;

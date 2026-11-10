@@ -182,3 +182,15 @@ body{padding-bottom:54px}
 
 /* Newstart-only manually scheduled alerts */
 .ns-managed-alert{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 10px;border-bottom:1px solid #dce4ed;background:#f8fbfd}.ns-managed-alert>div{flex:1;min-width:0}.ns-managed-alert b{font-size:14px;color:#173d57}.ns-managed-alert p{margin:5px 0;font-size:13px}.ns-managed-alert small{display:block;color:#64748b;margin-top:5px}.ns-managed-alert button{background:#16714b!important;color:white!important;border-radius:7px;border:0;padding:9px 13px;cursor:pointer}.ns-managed-alert .ns-alert-trash{background:#fff!important;color:#9c2c2c!important;border:1px solid #e4c8c8!important;font-size:18px;min-width:42px}#ns-alert-management[hidden]{display:none!important}#ns-alert-management summary{font-weight:750}#ns-alert-management .ns-form{margin:14px 0}#ns-alert-management .ns-form button{background:#173d57;color:#fff;border:0;padding:10px 14px;border-radius:7px;cursor:pointer}
+
+/* Newstart alerts: compact, aligned management form; scoped to Newstart only */
+#ns-alert-management .ns-alert-intro{margin:8px 0 14px;color:#627387;font-size:13px;line-height:1.5}
+#ns-alert-management .ns-alert-form{display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(160px,1.2fr) minmax(150px,1fr) minmax(145px,.8fr) auto;gap:12px;align-items:end;margin:12px 0 16px;max-width:none}
+#ns-alert-management .ns-alert-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;font-weight:700;color:#34475b}
+#ns-alert-management .ns-alert-field[hidden]{display:none!important}
+#ns-alert-management .ns-alert-field input,#ns-alert-management .ns-alert-field select{display:block;box-sizing:border-box;width:100%;height:42px;min-height:42px;padding:8px 11px;margin:0;border:1px solid #cbd5e1;border-radius:6px;background:#fff;box-shadow:none;font:inherit;font-size:13px;font-weight:400;color:#1f3042;outline-offset:2px}
+#ns-alert-management .ns-alert-field input:focus,#ns-alert-management .ns-alert-field select:focus{border-color:#3567b5;outline:2px solid #dbeafe}
+#ns-alert-management .ns-alert-add{box-sizing:border-box;height:42px;min-height:42px;white-space:nowrap;margin:0!important;padding:0 17px!important;border-radius:6px!important;font-size:13px;font-weight:700}
+#ns-alert-management #ns-alert-admin-message{font-size:13px;min-height:18px}
+@media(max-width:1100px){#ns-alert-management .ns-alert-form{grid-template-columns:repeat(2,minmax(0,1fr))}#ns-alert-management .ns-alert-add{justify-self:start}}
+@media(max-width:560px){#ns-alert-management .ns-alert-form{grid-template-columns:minmax(0,1fr)}#ns-alert-management .ns-alert-add{width:100%}}
