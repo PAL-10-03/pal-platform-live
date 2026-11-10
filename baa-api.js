@@ -139,7 +139,7 @@ app.post('/api/baa/prices/upload',manager,require('express').raw({type:['applica
  }catch(e){res.status(422).json({error:e.message});}
  finally{priceUploadLock.busy=false;}
 });
-app.get('/api/baa/boxes',manager,async(req,res)=>{try{const ids=await read('box-index',[]);const all=await Promise.all(ids.map(id=>read('box-'+id,null)));res.json(all.filter(Boolean).map(b=>({id:b.id,name:b.name,type:b.type,status:b.status,updatedAt:b.updatedAt,totalQty:summary(b).totalQty,pricedTotal:summary(b).pricedTotal,unpriced:summary(b).unpriced})).reverse());}catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/baa/boxes',manager,async(req,res)=>{try{const ids=await read('box-index',[]);const all=await Promise.all(ids.map(id=>read('box-'+id,null)));res.json(all.filter(Boolean).map(b=>({id:b.id,name:b.name,type:b.type,status:b.status,updatedAt:b.updatedAt,orderId:b.orderId||null,orderReference:b.orderReference||null,boxNumber:b.boxNumber||null,orderComplete:Boolean(b.orderComplete),totalQty:summary(b).totalQty,pricedTotal:summary(b).pricedTotal,unpriced:summary(b).unpriced})).reverse());}catch(e){res.status(500).json({error:e.message});}});
 app.post('/api/baa/boxes',manager,json,async(req,res)=>{try{const type=req.body.type;if(!['core-shipping','compressor-shipping','core-receiving'].includes(type))return res.status(400).json({error:'Invalid type'});const id=require('crypto').randomUUID();const b={id,name:String(req.body.name||type).slice(0,100),type,status:'draft',receivingTotal:null,items:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),createdBy:auth.user(req)};await write('box-'+id,b);const ids=await read('box-index',[]);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));}catch(e){res.status(500).json({error:e.message});}});
 // Manager-only deletion; the index is updated before removing the stored box.
 app.delete('/api/baa/boxes/:id',manager,async(req,res)=>{try{
@@ -248,16 +248,30 @@ app.get('/api/baa/compressor-orders/:id/export',manager,async(req,res)=>{try{
  boxes.forEach(b=>compressorSheet(wb,b,models,`Box ${b.boxNumber}`));const data=await wb.xlsx.writeBuffer();const filename=String(boxes[0].orderReference).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60);
  res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${filename}.xlsx"`});res.send(Buffer.from(data));
  }catch(e){res.status(500).json({error:e.message});}});
-app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
- const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);
- const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
- if(b.type==='compressor-shipping'){
-  const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));
-  compressorSheet(wb,b,models,'Buy List');
-  const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});return res.send(Buffer.from(data));
- }
-
- const sh=wb.addWorksheet('Buy List');
+app.post('/api/baa/core-orders',manager,json,async(req,res)=>{try{
+ const reference=String(req.body.reference||'').trim();if(!reference||reference.length>75)return res.status(400).json({error:'Order reference required (max 75 characters)'});
+ const id=require('crypto').randomUUID(),now=new Date().toISOString();
+ const b={id,name:`${reference} - Box 1`,type:'core-shipping',status:'draft',orderId:id,orderReference:reference,boxNumber:1,orderComplete:false,receivingTotal:null,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};
+ await write('box-'+id,b);const ids=await read('box-index',[]);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));
+ }catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/baa/core-orders/:id',manager,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='core-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!all.length)return res.sendStatus(404);res.json({reference:all[0].orderReference,complete:Boolean(all[0].orderComplete),boxes:all.map(summary)});
+ }catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/baa/core-orders/:id/next-box',manager,json,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='core-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!all.length)return res.sendStatus(404);if(all[0].orderComplete)return res.status(409).json({error:'Order already complete'});
+ if(all.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish the current box first'});
+ const number=all.length+1,id=require('crypto').randomUUID(),now=new Date().toISOString();const b={id,name:`${all[0].orderReference} - Box ${number}`,type:'core-shipping',status:'draft',orderId:req.params.id,orderReference:all[0].orderReference,boxNumber:number,items:[],createdAt:now,updatedAt:now,createdBy:auth.user(req)};
+ await write('box-'+id,b);ids.push(id);await write('box-index',ids);res.status(201).json(summary(b));
+ }catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/baa/core-orders/:id/complete',manager,json,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);const ids=await read('box-index',[]);const all=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='core-shipping');
+ if(!all.length)return res.sendStatus(404);if(all.some(b=>b.status!=='finished'))return res.status(409).json({error:'Finish every box first'});
+ const first=all.find(b=>b.id===req.params.id);if(!first)return res.sendStatus(404);first.orderComplete=true;first.updatedAt=new Date().toISOString();await write('box-'+first.id,first);res.json({ok:true});
+ }catch(e){res.status(500).json({error:e.message});}});
+function coreShippingWorksheet(wb,b,sheetName){
+ const sh=wb.addWorksheet(sheetName);
  // Core Shipping and Core Receiving only: merged identification row and white spacer.
  const coreHeading=b.type==='core-receiving'?'CORES RECEIVING':'CORES';
  for(const [range,anchor,label] of [['A1:D1','A1',coreHeading],['E1:H1','E1','CUSTOMER'],['I1:K1','I1','DATE']]){
@@ -283,6 +297,26 @@ app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
  const missing=b.items.some(x=>x.price===null||x.price===undefined);
  if(missing)sh.getCell(`A${t+2}`).value='WARNING: Missing prices; total excludes unpriced items.';
  sh.views=[{state:'frozen',ySplit:3}];sh.pageSetup={fitToPage:true,fitToWidth:1,fitToHeight:0,printArea:`A1:${b.type==='compressor-shipping'?'K':'I'}${missing?t+2:t}`};
+}
+
+app.get('/api/baa/core-orders/:id/export',manager,async(req,res)=>{try{
+ if(!safeId(req.params.id))return res.sendStatus(400);
+ const ids=await read('box-index',[]);const boxes=(await Promise.all(ids.map(id=>read('box-'+id,null)))).filter(b=>b?.orderId===req.params.id&&b.type==='core-shipping').sort((a,b)=>a.boxNumber-b.boxNumber);
+ if(!boxes.length)return res.sendStatus(404);const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
+ for(const b of boxes)coreShippingWorksheet(wb,b,`Box ${b.boxNumber}`);
+ const data=await wb.xlsx.writeBuffer();const filename=String(boxes[0].orderReference).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60);
+ res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-Cores-${filename}.xlsx"`});res.send(Buffer.from(data));
+ }catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/baa/boxes/:id/export',manager,async(req,res)=>{try{
+ const b=await read('box-'+req.params.id,null);if(!b)return res.sendStatus(404);
+ const wb=new ExcelJS.Workbook();wb.calcProperties.fullCalcOnLoad=true;
+ if(b.type==='compressor-shipping'){
+  const catalog=await cat();const models=new Map(catalog.filter(r=>r.model).map(r=>[norm(r.part),String(r.model)]));
+  compressorSheet(wb,b,models,'Buy List');
+  const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});return res.send(Buffer.from(data));
+ }
+
+ coreShippingWorksheet(wb,b,'Buy List');
  const data=await wb.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="BAA-${b.type}-${b.id.slice(0,8)}.xlsx"`});res.send(Buffer.from(data));
  }catch(e){res.status(500).json({error:e.message});}});
 
